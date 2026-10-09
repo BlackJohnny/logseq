@@ -19,6 +19,7 @@
             [frontend.state :as state]
             [frontend.ui :as ui]
             [frontend.util :as util]
+            [frontend.handler.dictation :as dictation]
             [frontend.version :refer [version]]
             [reitit.frontend.easy :as rfe]
             [rum.core :as rum]
@@ -165,6 +166,26 @@
       {:title (t :header/go-forward) :on-click #(js/window.history.forward)}
       (ui/icon "arrow-right" {:size ui/icon-size})])])
 
+(rum/defc dictation-button < rum/reactive
+  []
+  (let [{:keys [status elapsed]} (rum/react dictation/*state)]
+    [:button.button.icon.inline.mx-1
+     {:title (case status
+               :starting "Starting microphone..."
+               :recording "Stop dictation"
+               :transcribing "Transcribing..."
+               "Dictate (speech to text)")
+      :disabled (contains? #{:starting :transcribing} status)
+      ;; keep focus (and the edit cursor) in the editor
+      :on-mouse-down #(.preventDefault %)
+      :on-click #(dictation/toggle!)}
+     (case status
+       :recording [:span.flex.items-center {:style {:color "#e5484d"}}
+                   (ui/icon "player-stop-filled")
+                   [:span.ml-1.text-xs (str (quot elapsed 60) ":" (when (< (mod elapsed 60) 10) "0") (mod elapsed 60))]]
+       (:starting :transcribing) (ui/icon "loader-2" {:class "animate-spin"})
+       (ui/icon "microphone"))]))
+
 (rum/defc updater-tips-new-version
   [t]
   (let [[downloaded, set-downloaded] (rum/use-state nil)
@@ -260,6 +281,9 @@
 
       (when (state/feature-http-server-enabled?)
         (server/server-indicator (state/sub :electron/server)))
+
+      (when (util/electron?)
+        (dictation-button))
 
       (when (util/electron?)
         (back-and-forward))

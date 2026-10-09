@@ -3,6 +3,14 @@ const fs = require('fs')
 
 module.exports = {
   packagerConfig: {
+    // whisper.cpp dictation binaries (scripts/build-whisper.sh) -> <resources>/whisper/bin.
+    // Models are not bundled; they are downloaded on demand.
+    extraResource: (() => {
+      const dir = path.join(__dirname, '..', '.whisper-build', 'dist', 'whisper')
+      if (fs.existsSync(dir)) return [dir]
+      console.warn('!! whisper binaries not found, dictation will be unavailable (run scripts/build-whisper.sh)')
+      return []
+    })(),
     name: 'Logseq-OG',
     icon: './icons/logseq_big_sur.icns',
     buildVersion: "92",

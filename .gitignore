@@ -63,3 +63,6 @@ deps/shui/.lsp
 deps/shui/.lsp-cache
 deps/shui/.clj-kondo
 deps/shui/shui-graph/logseq/bak
+
+# whisper.cpp dictation build (source checkout + compiled binaries/models; see scripts/build-whisper.sh)
+/.whisper-build/

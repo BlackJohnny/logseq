@@ -37,6 +37,7 @@
             [frontend.fs.sync :as sync]
             [frontend.fs.watcher-handler :as fs-watcher]
             [frontend.handler.common :as common-handler]
+            [frontend.handler.dictation :as dictation]
             [frontend.handler.editor :as editor-handler]
             [frontend.handler.file :as file-handler]
             [frontend.handler.file-sync :as file-sync-handler]
@@ -406,6 +407,9 @@
 (defmethod handle :command/run [_]
   (when (util/electron?)
     (state/set-modal! shell/shell)))
+
+(defmethod handle :dictation/start [_]
+  (dictation/start!))
 
 (defmethod handle :go/search [_]
   (state/set-modal! cmdk/cmdk-modal

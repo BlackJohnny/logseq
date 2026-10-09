@@ -9,6 +9,7 @@
             [frontend.db.model :as db-model]
             [frontend.fs.sync :as sync]
             [frontend.fs.watcher-handler :as watcher-handler]
+            [frontend.handler.dictation :as dictation]
             [frontend.handler.editor :as editor-handler]
             [frontend.handler.file-sync :as file-sync-handler]
             [frontend.handler.notification :as notification]
@@ -61,6 +62,8 @@
                  (fn [data]
                    (let [payload (bean/->clj data)]
                      (state/set-state! [:file-sync/graph-state (:graphUUID payload) :file-sync/progress (:file payload)] payload))))
+
+  (safe-api-call "whisper-download-progress" dictation/on-download-progress)
 
   (safe-api-call "notification"
                  (fn [data]

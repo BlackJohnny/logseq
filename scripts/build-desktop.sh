@@ -23,6 +23,14 @@ fi
 GYP="$HOME/.local/gyp/node_modules/node-gyp/bin/node-gyp.js"
 [ -f "$GYP" ] && export npm_config_node_gyp="$GYP"
 
+# --- dictation (whisper.cpp) binaries, bundled into the package -------------
+# Built once; delete .whisper-build/dist to force a rebuild. Never fatal: without
+# them the app builds fine but dictation reports itself as unavailable.
+if [ ! -x "$ROOT/.whisper-build/dist/whisper/bin/whisper-cli-cpu" ]; then
+  echo ">> building whisper.cpp for dictation"
+  "$ROOT/scripts/build-whisper.sh" || echo "!! whisper build failed; continuing without dictation"
+fi
+
 # --- build -----------------------------------------------------------------
 echo ">> [1/4] yarn install (root)"
 yarn install

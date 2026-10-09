@@ -27,6 +27,7 @@
             [electron.shell :as shell]
             [electron.state :as state]
             [electron.utils :as utils]
+            [electron.whisper :as whisper]
             [electron.window :as win]
             [goog.functions :refer [debounce]]
             [logseq.common.graph :as common-graph]
@@ -690,6 +691,19 @@
 
 (defmethod handle :cancel-all-requests [_ args]
   (apply rsapi/cancel-all-requests (rest args)))
+
+(defmethod handle :whisper/status [_win [_ backend-pref]]
+  (p/then (whisper/status backend-pref) clj->js))
+
+(defmethod handle :whisper/download-model [^js win [_ model]]
+  (p/then (whisper/download-model! win model) clj->js))
+
+(defmethod handle :whisper/cancel-download [_win [_ model]]
+  (whisper/cancel-download! model)
+  nil)
+
+(defmethod handle :whisper/transcribe [_win [_ audio-b64 opts]]
+  (p/then (whisper/transcribe! audio-b64 opts) clj->js))
 
 (defmethod handle :default [args]
   (logger/error "Error: no ipc handler for:" args))

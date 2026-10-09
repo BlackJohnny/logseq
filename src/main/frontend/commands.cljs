@@ -289,6 +289,9 @@
                  (p/let [_ (draw/create-draw-with-default-content path)]
                    (println "draw file created, " path))
                  text)) "Draw a graph with Excalidraw"]
+     (when (util/electron?)
+       ["Dictate" [[:editor/clear-current-slash]
+                   [:dictation/start]] "Speech to text: speak after the beep, press the mic button to stop"])
      ["Embed HTML " (->inline "html")]
 
      ["Embed Video URL" [[:editor/input "{{video }}" {:last-pattern command-trigger
@@ -714,6 +717,9 @@
 (defmethod handle-step :editor/click-hidden-file-input [[_ _input-id]]
   (when-let [input-file (gdom/getElement "upload-file")]
     (.click input-file)))
+
+(defmethod handle-step :dictation/start [[_]]
+  (state/pub-event! [:dictation/start]))
 
 (defmethod handle-step :editor/exit [[_]]
   (state/clear-edit!))

@@ -14,6 +14,7 @@
             [frontend.db :as db]
             [frontend.dicts :as dicts]
             [frontend.handler.config :as config-handler]
+            [frontend.handler.dictation :as dictation]
             [frontend.handler.file-sync :as file-sync-handler]
             [frontend.handler.global-config :as global-config-handler]
             [frontend.handler.notification :as notification]
@@ -796,6 +797,72 @@
        :warning
        [:p (t :settings-page/clear-cache-warning)])]))
 
+(rum/defc settings-dictation < rum/reactive
+  {:did-mount (fn [state] (dictation/refresh-status!) state)}
+  []
+  (let [{:keys [engine download]} (rum/react dictation/*state)
+        select (fn [pref-key options default]
+                 [:select.form-select.is-small
+                  {:value (dictation/get-pref pref-key default)
+                   :on-change (fn [e]
+                                (dictation/set-pref! pref-key (util/evalue e))
+                                (dictation/refresh-status!))}
+                  (for [[value label] options]
+                    [:option {:key value :value value} label])])
+        selected (dictation/selected-model)]
+    [:div.panel-wrap.is-dictation
+     (row-with-button-action
+      {:left-label "Status"
+       :description "Speech recognition runs locally on this computer (whisper.cpp)."
+       :action [:span.text-sm
+                (cond
+                  (nil? engine) "Checking..."
+                  (not (:available engine)) "Unavailable: run scripts/build-whisper.sh"
+                  (= "cuda" (:backend engine)) "Ready, using the NVIDIA GPU"
+                  :else "Ready, using the CPU")]})
+     (row-with-button-action
+      {:left-label "Language"
+       :description "Auto-detect handles Romanian and English."
+       :-for "dictation_language"
+       :action (select :language [["auto" "Auto-detect"] ["ro" "Română"] ["en" "English"]] "auto")})
+     (row-with-button-action
+      {:left-label "Processor"
+       :description "Auto prefers the NVIDIA GPU when one is available."
+       :-for "dictation_backend"
+       :action (select :backend [["auto" "Auto"] ["gpu" "GPU (NVIDIA)"] ["cpu" "CPU"]] "auto")})
+     (for [[model-id {:keys [size-mb installed]}]
+           (sort-by (comp :size-mb val) > (:models engine))
+           :let [model-id (name model-id)
+                 downloading? (= model-id (:model download))]]
+       (row-with-button-action
+        {:key model-id
+         :left-label (str model-id " (" size-mb " MB)")
+         :action
+         (cond
+           installed
+           [:div.flex.items-center.gap-3
+            [:label.text-sm.flex.items-center.gap-1
+             [:input {:type "radio" :name "dictation-model"
+                      :checked (= selected model-id)
+                      :on-change #(do (dictation/set-pref! :model model-id)
+                                      (dictation/refresh-status!))}]
+             "Use"]]
+
+           downloading?
+           [:div.flex.items-center.gap-3
+            [:span.text-sm (let [{:keys [received total]} download]
+                             (if (pos? (or total 0))
+                               (str (js/Math.round (* 100 (/ received total))) "%")
+                               "Starting..."))]
+            (shui-ui/button {:size :sm :variant :ghost
+                             :on-click #(dictation/cancel-download! model-id)}
+                            "Cancel")]
+
+           :else
+           (shui-ui/button {:size :sm :disabled (some? download)
+                            :on-click #(dictation/download-model! model-id)}
+                           "Download"))}))]))
+
 (rum/defc sync-enabled-switcher
   [enabled?]
   (ui/toggle enabled?
@@ -1169,6 +1236,8 @@
                ;; (when (util/electron?)
                ;;   [:assets "assets" (t :settings-page/tab-assets) (ui/icon "box")])
 
+               (when (util/electron?)
+                 [:dictation "dictation" "Dictation" (ui/icon "microphone")])
                [:advanced "advanced" (t :settings-page/tab-advanced) (ui/icon "bulb")]
                [:features "features" (t :settings-page/tab-features) (ui/icon "app-feature")]
 
@@ -1213,6 +1282,9 @@
 
          :assets
          (assets/settings-content)
+
+         :dictation
+         (settings-dictation)
 
          :advanced
          (settings-advanced current-repo)

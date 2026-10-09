@@ -4,6 +4,7 @@
             [frontend.extensions.srs.handler :as srs]
             [frontend.extensions.pdf.utils :as pdf-utils]
             [frontend.handler.config :as config-handler]
+            [frontend.handler.dictation :as dictation]
             [frontend.handler.editor :as editor-handler]
             [frontend.handler.paste :as paste-handler]
             [frontend.handler.history :as history]
@@ -207,6 +208,9 @@
 
    :editor/new-line                         {:binding "shift+enter"
                                              :fn      editor-handler/keydown-new-line-handler}
+
+   :editor/dictate                          {:binding "mod+shift+m"
+                                             :fn      dictation/toggle!}
 
    :editor/new-whiteboard                   {:binding "n w"
                                              :fn      #(whiteboard-handler/create-new-whiteboard-and-redirect!)}
@@ -655,6 +659,7 @@
             :graph/save
             :graph/re-index
             :editor/cycle-todo
+            :editor/dictate
             :editor/up
             :editor/down
             :editor/left
