@@ -13,7 +13,7 @@
             [goog.dom :as gdom]
             [promesa.core :as p]))
 
-(def ^:private sample-rate 16000)
+(def sample-rate 16000)
 (def ^:private min-seconds 0.5)
 
 (defonce *state
@@ -38,7 +38,7 @@
 
 ;; --- engine status / model download ----------------------------------------------
 
-(defn- <ipc [& args]
+(defn <ipc [& args]
   (p/let [r (apply ipc/ipc args)]
     (js->clj r :keywordize-keys true)))
 
@@ -69,7 +69,7 @@
 
 ;; --- audio -----------------------------------------------------------------------
 
-(defn- encode-wav
+(defn encode-wav
   "Float32 chunks -> 16-bit PCM mono WAV (as a Blob)."
   [chunks]
   (let [n (reduce + (map #(.-length ^js %) chunks))
@@ -96,7 +96,7 @@
         (recur (rest chunks) (+ offset (* 2 (.-length chunk))))))
     (js/Blob. #js [buf] #js {:type "audio/wav"})))
 
-(defn- blob->base64 [^js blob]
+(defn blob->base64 [^js blob]
   (p/create
    (fn [resolve reject]
      (let [reader (js/FileReader.)]
@@ -133,7 +133,7 @@
 
 (defn recording? [] (= :recording (:status @*state)))
 
-(defn- beep!
+(defn beep!
   "Short tone so the user knows when to start (or stop) talking."
   [freq ms]
   (try
@@ -213,7 +213,7 @@
   (notification/show! msg level))
 
 (defn start! []
-  (when (and (util/electron?) (= :idle (:status @*state)))
+  (when (and (util/electron?) (= :idle (:status @*state)) (not (:busy-elsewhere? @*state)))
     (let [origin (capture-origin)]
       (swap! *state assoc :status :starting :elapsed 0)
       (-> (p/let [engine (or (:engine @*state) (refresh-status!))]

@@ -19,6 +19,7 @@
             [frontend.state :as state]
             [frontend.ui :as ui]
             [frontend.util :as util]
+            [frontend.components.meeting :as meeting-ui]
             [frontend.handler.dictation :as dictation]
             [frontend.version :refer [version]]
             [reitit.frontend.easy :as rfe]
@@ -181,7 +182,7 @@
       :on-click #(dictation/toggle!)}
      (case status
        :recording [:span.flex.items-center {:style {:color "#e5484d"}}
-                   (ui/icon "player-stop-filled")
+                   (ui/icon "player-stop")
                    [:span.ml-1.text-xs (str (quot elapsed 60) ":" (when (< (mod elapsed 60) 10) "0") (mod elapsed 60))]]
        (:starting :transcribing) (ui/icon "loader-2" {:class "animate-spin"})
        (ui/icon "microphone"))]))
@@ -281,6 +282,9 @@
 
       (when (state/feature-http-server-enabled?)
         (server/server-indicator (state/sub :electron/server)))
+
+      (when (util/electron?)
+        (meeting-ui/meeting-button))
 
       (when (util/electron?)
         (dictation-button))

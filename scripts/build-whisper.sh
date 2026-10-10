@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build whisper.cpp (dictation backend, Linux) from source: a CPU binary always,
 # plus a CUDA binary when the CUDA toolkit (nvcc) is available.
-# Output: .whisper-build/dist/whisper/bin/whisper-cli-cpu  (and whisper-cli-cuda)
+# Output: .whisper-build/dist/whisper/bin/{whisper-cli,whisper-server}-{cpu,cuda}
 #   (kept out of resources/, which gulp copies wholesale into the app)
 # Env:  WHISPER_REF=<tag|commit>   whisper.cpp version to build (default: pinned below)
 #       CUDA_ARCHS="75;86;89"      CUDA architectures (default: Turing, Ampere, Ada)
@@ -33,15 +33,16 @@ git -C "$SRC" checkout --quiet "$WHISPER_REF"
 
 mkdir -p "$OUT"
 
-build() { # <name> <extra cmake args...>
+build() { # <name> <extra cmake args...>  (builds whisper-cli and whisper-server)
   local name="$1"; shift
   local bdir="$SRC/build-$name"
   echo ">> [$name] configure"
   cmake -S "$SRC" -B "$bdir" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-    -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF "$@"
+    -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=ON "$@"
   echo ">> [$name] build"
-  cmake --build "$bdir" --config Release -j "$JOBS" --target whisper-cli
+  cmake --build "$bdir" --config Release -j "$JOBS" --target whisper-cli whisper-server
   install -m 0755 "$bdir/bin/whisper-cli" "$OUT/whisper-cli-$name"
+  install -m 0755 "$bdir/bin/whisper-server" "$OUT/whisper-server-$name"
 }
 
 # --- CPU -------------------------------------------------------------------
@@ -50,6 +51,10 @@ build cpu -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON
 
 # --- CUDA (optional) -------------------------------------------------------
 NVCC="$(command -v nvcc || true)"
+# Prefer the newest side-by-side toolkit (/usr/local/cuda-X.Y) over the /usr/local/cuda symlink.
+for d in $(ls -d /usr/local/cuda-[0-9]* 2>/dev/null | sort -rV); do
+  [ -x "$d/bin/nvcc" ] && { NVCC="$d/bin/nvcc"; break; }
+done
 [ -z "$NVCC" ] && [ -x /usr/local/cuda/bin/nvcc ] && NVCC=/usr/local/cuda/bin/nvcc
 [ -n "${CUDA_HOME:-}" ] && [ -x "$CUDA_HOME/bin/nvcc" ] && NVCC="$CUDA_HOME/bin/nvcc"   # explicit override wins
 

@@ -2,6 +2,7 @@
   (:require [cljs-drag-n-drop.core :as dnd]
             [clojure.string :as string]
             [frontend.version :refer [version]]
+            [frontend.components.audio-player :as audio-player]
             [frontend.components.find-in-page :as find-in-page]
             [frontend.components.header :as header]
             [frontend.components.journal :as journal]
@@ -981,6 +982,7 @@
        [:div#app-single-container]]
 
       (ui/notification)
+      (audio-player/mini-player)
       (ui/modal)
       (ui/sub-modal)
       (shui-toaster/install-toaster)

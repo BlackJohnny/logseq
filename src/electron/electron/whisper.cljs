@@ -8,6 +8,7 @@
             ["electron" :refer [app]]
             ["fs-extra" :as fs]
             ["https" :as https]
+            ["net" :as net]
             ["os" :as os]
             ["path" :as node-path]
             [clojure.string :as string]
@@ -48,9 +49,13 @@
        (filter #(fs/pathExistsSync %))
        first))
 
-(defn- binary [backend]
+(defn- binary
+  "backend is :cpu | :cuda (whisper-cli) or :server-cpu | :server-cuda (whisper-server)."
+  [backend]
   (when-let [dir (bin-dir)]
-    (let [f (node-path/join dir (str "whisper-cli-" (name backend)))]
+    (let [f (node-path/join dir (if (string/starts-with? (name backend) "server-")
+                                  (str "whisper-server-" (subs (name backend) 7))
+                                  (str "whisper-cli-" (name backend))))]
       (when (fs/pathExistsSync f) f))))
 
 ;; --- backend detection -------------------------------------------------------
@@ -210,3 +215,112 @@
             {:ok true :text text :backend (name (if @*gpu-broken? :cpu chosen))})
             (p/catch (fn [e] {:ok false :error (str (.-message e))}))
             (p/finally #(fs/removeSync wav)))))))
+
+;; --- persistent server (live transcription) ------------------------------------
+;; `whisper-server` keeps the model loaded, so each utterance costs ~0.2-0.4 s
+;; instead of reloading the model on every `whisper-cli` run.
+
+(defonce ^:private *server (atom nil)) ; {:proc :port :model :language :backend}
+
+(defn- free-port []
+  (p/create
+   (fn [resolve reject]
+     (let [srv (.createServer net)]
+       (.on srv "error" reject)
+       (.listen srv 0 "127.0.0.1"
+                (fn []
+                  (let [port (.-port (.address srv))]
+                    (.close srv #(resolve port)))))))))
+
+(defn- server-url [port path] (str "http://127.0.0.1:" port path))
+
+(defn- wait-ready!
+  "Resolves true once the server answers, false if the process died or we timed out."
+  [^js proc port]
+  (let [deadline (+ (js/Date.now) 90000)]
+    (letfn [(poll []
+              (cond
+                (some? (.-exitCode proc)) (p/resolved false)
+                (> (js/Date.now) deadline) (p/resolved false)
+                :else
+                (-> (js/fetch (server-url port "/"))
+                    (p/then (fn [_] true))
+                    (p/catch (fn [_] (p/then (p/delay 250) poll))))))]
+      (poll))))
+
+(defn server-stop! []
+  (when-let [{:keys [^js proc]} @*server]
+    (reset! *server nil)
+    (try (.kill proc) (catch :default _ nil))))
+
+(defn- spawn-server! [bin model-file language port]
+  (let [proc (child-process/spawn
+              bin
+              #js ["-m" model-file "--host" "127.0.0.1" "--port" (str port)
+                   "-l" (or language "auto")
+                   "-t" (str (max 1 (min 8 (.-length (os/cpus)))))
+                   "-sns"]            ; suppress non-speech tokens ("[Music]" etc.)
+              #js {:stdio #js ["ignore" "ignore" "pipe"]})]
+    (.on (.-stderr proc) "data" (fn [d] (logger/debug "whisper-server:" (str d))))
+    proc))
+
+(defn server-start!
+  "Start (or reuse) the persistent server. opts: {:model :language :backend}.
+  Resolves to {:ok true :backend ..} or {:ok false :error ..}."
+  [{:keys [model language backend]}]
+  (let [model (or model default-model)
+        model-file (model-path model)
+        language (or language "auto")
+        running @*server]
+    (cond
+      (and running (= model (:model running)) (= language (:language running))
+           (nil? (.-exitCode ^js (:proc running))))
+      (p/resolved {:ok true :backend (name (:backend running))})
+
+      (not (binary :server-cpu))
+      (p/resolved {:ok false :error "whisper-server not found (run scripts/build-whisper.sh)"})
+
+      (or (nil? model-file) (not (fs/pathExistsSync model-file)))
+      (p/resolved {:ok false :error (str "model not installed: " model)})
+
+      :else
+      (do
+        (server-stop!)
+        (p/let [chosen (pick-backend (or backend "auto"))
+                try-start (fn [backend-kw]
+                            (p/let [port (free-port)
+                                    bin (binary (if (= backend-kw :cuda) :server-cuda :server-cpu))
+                                    proc (spawn-server! bin model-file language port)
+                                    ready? (wait-ready! proc port)]
+                              (if ready?
+                                (do (reset! *server {:proc proc :port port :model model
+                                                     :language language :backend backend-kw})
+                                    (.on ^js app "will-quit" server-stop!)
+                                    {:ok true :backend (name backend-kw)})
+                                (do (try (.kill ^js proc) (catch :default _ nil))
+                                    nil))))
+                r (try-start chosen)
+                r (or r (when (= chosen :cuda)
+                          (logger/error "whisper-server CUDA failed to start, falling back to CPU")
+                          (reset! *gpu-broken? true)
+                          (try-start :cpu)))]
+          (or r {:ok false :error "whisper-server failed to start"}))))))
+
+(defn server-transcribe!
+  "Transcribe a 16 kHz mono WAV (base64) with the running server."
+  [audio-b64]
+  (if-let [{:keys [port language]} @*server]
+    (let [form (js/FormData.)]
+      (.append form "file" (js/Blob. #js [(js/Buffer.from audio-b64 "base64")] #js {:type "audio/wav"}) "chunk.wav")
+      (.append form "response_format" "json")
+      (.append form "temperature" "0.0")
+      (.append form "temperature_inc" "0.0")
+      (.append form "language" (or language "auto"))
+      (-> (js/fetch (server-url port "/inference") #js {:method "POST" :body form})
+          (p/then (fn [^js res] (.json res)))
+          (p/then (fn [^js body]
+                    (if (.-error body)
+                      {:ok false :error (str (.-error body))}
+                      {:ok true :text (string/trim (str (.-text body)))})))
+          (p/catch (fn [e] {:ok false :error (str (.-message e))}))))
+    (p/resolved {:ok false :error "server not running"})))

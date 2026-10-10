@@ -10,6 +10,7 @@
             [datascript.core :as d]
             [dommy.core :as dom]
             [frontend.commands :as commands]
+            [frontend.components.audio-player :as audio-player]
             [frontend.components.block.macros :as block-macros]
             [frontend.components.datetime :as datetime-comp]
             [frontend.components.lazy-editor :as lazy-editor]
@@ -1498,6 +1499,12 @@
       (when-let [timestamp (first arguments)]
         (when-let [seconds (youtube/parse-timestamp timestamp)]
           (youtube/timestamp seconds)))
+
+      (= name "audio-timestamp")
+      ;; {{audio-timestamp ../assets/meetings/x/audio.webm, 300}}
+      (let [[_ path seconds] (re-find #"^\s*(.*?)[,\s]+(\d+(?:\.\d+)?)\s*$" (string/join "," arguments))]
+        (when (and path seconds)
+          (audio-player/timestamp-button (string/trim path) (js/parseFloat seconds))))
 
       (= name "zotero-imported-file")
       (let [[item-key filename] arguments]

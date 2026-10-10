@@ -702,6 +702,37 @@
   (whisper/cancel-download! model)
   nil)
 
+(defmethod handle :whisper/server-start [_win [_ opts]]
+  (p/then (whisper/server-start! opts) clj->js))
+
+(defmethod handle :whisper/server-stop [_win [_]]
+  (whisper/server-stop!)
+  nil)
+
+(defmethod handle :whisper/server-transcribe [_win [_ audio-b64]]
+  (p/then (whisper/server-transcribe! audio-b64) clj->js))
+
+(defn- meeting-target
+  "Resolve `rel-path` inside `repo-dir`; refuses anything that escapes it."
+  [repo-dir rel-path]
+  (let [root (node-path/resolve repo-dir)
+        target (node-path/resolve root rel-path)]
+    (when-not (string/starts-with? target (str root node-path/sep))
+      (throw (js/Error. (str "path escapes the graph directory: " rel-path))))
+    target))
+
+(defmethod handle :meeting/append-file [_win [_ repo-dir rel-path b64]]
+  (let [target (meeting-target repo-dir rel-path)]
+    (fs-extra/ensureDirSync (node-path/dirname target))
+    (fs/appendFileSync target (js/Buffer.from b64 "base64"))
+    true))
+
+(defmethod handle :meeting/write-text [_win [_ repo-dir rel-path text]]
+  (let [target (meeting-target repo-dir rel-path)]
+    (fs-extra/ensureDirSync (node-path/dirname target))
+    (fs/writeFileSync target text)
+    true))
+
 (defmethod handle :whisper/transcribe [_win [_ audio-b64 opts]]
   (p/then (whisper/transcribe! audio-b64 opts) clj->js))
 
