@@ -79,12 +79,17 @@
 
 ;; --- transcription queue ---------------------------------------------------------
 
+(defn audio-macro
+  "The play-button macro for `seconds` into the meeting audio at `audio-ref`."
+  [audio-ref seconds]
+  (str "{{audio-timestamp " audio-ref ", " (js/Math.floor seconds) "}}"))
+
 (defn- insert-block!
   "Utterances are grouped under one parent block per minute of the meeting
   (\"05:00\"), so a long meeting stays a short, collapsible outline."
-  [{:keys [page-name minute audio-ref]} {:keys [text start]}]
+  [{:keys [page-name minute audio-ref]} {:keys [text start block]}]
   (let [m (js/Math.floor (/ start 60))
-        macro (fn [secs] (str "{{audio-timestamp " audio-ref ", " (js/Math.floor secs) "}}"))
+        macro (partial audio-macro audio-ref)
         current @minute
         parent-uuid (if (= m (:minute current))
                       (:uuid current)
@@ -96,7 +101,8 @@
                         u))]
     (editor-handler/api-insert-new-block!
      (str (macro start) " " text)
-     {:block-uuid parent-uuid :sibling? false :edit-block? false})))
+     {:block-uuid parent-uuid :sibling? false :edit-block? false
+      :custom-uuid (uuid block)})))
 
 (defn- process-utterance!
   [{:keys [segments] :as session} {:keys [chunks start end]}]
@@ -106,7 +112,8 @@
           (js/console.warn "meeting: transcription failed" (:error r))
           (let [text (:text r)]
             (when-not (junk-text? text)
-              (let [segment {:id (count @segments) :start start :end end :text text}]
+              (let [segment {:id (count @segments) :start start :end end :text text
+                             :block (str (db/new-block-id))}]
                 (swap! segments conj segment)
                 (swap! *state assoc :segments (count @segments))
                 (insert-block! session segment)

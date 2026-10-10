@@ -20,6 +20,7 @@
             [frontend.ui :as ui]
             [frontend.util :as util]
             [frontend.components.meeting :as meeting-ui]
+            [frontend.components.speakers :as speakers-ui]
             [frontend.handler.dictation :as dictation]
             [frontend.version :refer [version]]
             [reitit.frontend.easy :as rfe]
@@ -282,6 +283,9 @@
 
       (when (state/feature-http-server-enabled?)
         (server/server-indicator (state/sub :electron/server)))
+
+      (when (util/electron?)
+        (speakers-ui/speakers-button))
 
       (when (util/electron?)
         (meeting-ui/meeting-button))

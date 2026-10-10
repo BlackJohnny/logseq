@@ -101,7 +101,7 @@
   (when-not (.isDestroyed win)
     (.send (.-webContents win) "whisper-download-progress" (clj->js data))))
 
-(defn- download-file!
+(defn download-file!
   "GET `url` (following redirects) into `dest`, reporting progress. Resolves on success."
   [url dest on-progress model]
   (p/create

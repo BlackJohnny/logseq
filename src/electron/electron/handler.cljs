@@ -25,6 +25,7 @@
             [electron.search :as search]
             [electron.server :as server]
             [electron.shell :as shell]
+            [electron.speakers :as speakers]
             [electron.state :as state]
             [electron.utils :as utils]
             [electron.whisper :as whisper]
@@ -732,6 +733,36 @@
     (fs-extra/ensureDirSync (node-path/dirname target))
     (fs/writeFileSync target text)
     true))
+
+(defmethod handle :meeting/read-file [_win [_ repo-dir rel-path]]
+  (.toString (fs/readFileSync (meeting-target repo-dir rel-path)) "base64"))
+
+(defmethod handle :meeting/read-text [_win [_ repo-dir rel-path]]
+  (let [target (meeting-target repo-dir rel-path)]
+    (when (fs/existsSync target) (fs/readFileSync target "utf8"))))
+
+(defmethod handle :speakers/status [_win [_]]
+  (clj->js (speakers/status)))
+
+(defmethod handle :speakers/download-models [_win [_]]
+  (p/then (speakers/download-models!) clj->js))
+
+(defmethod handle :speakers/append-pcm [_win [_ token b64]]
+  (speakers/append-pcm! token b64))
+
+(defmethod handle :speakers/diarize [_win [_ token opts]]
+  (p/then (speakers/diarize! token opts) clj->js))
+
+(defmethod handle :speakers/save-profile [_win [_ person-name cache-key speaker-id]]
+  (if-let [embedding (speakers/cached-embedding cache-key speaker-id)]
+    (speakers/save-profile! person-name embedding)
+    false))
+
+(defmethod handle :speakers/list-profiles [_win [_]]
+  (clj->js (speakers/list-profiles)))
+
+(defmethod handle :speakers/delete-profile [_win [_ person-name]]
+  (speakers/delete-profile! person-name))
 
 (defmethod handle :whisper/transcribe [_win [_ audio-b64 opts]]
   (p/then (whisper/transcribe! audio-b64 opts) clj->js))

@@ -3,14 +3,16 @@ const fs = require('fs')
 
 module.exports = {
   packagerConfig: {
-    // whisper.cpp dictation binaries (scripts/build-whisper.sh) -> <resources>/whisper/bin.
+    // Native helpers built by scripts/build-whisper.sh (whisper -> <resources>/whisper/bin)
+    // and scripts/build-speaker-tools.sh (speaker-tool -> <resources>/speakers/{bin,lib}).
     // Models are not bundled; they are downloaded on demand.
-    extraResource: (() => {
-      const dir = path.join(__dirname, '..', '.whisper-build', 'dist', 'whisper')
-      if (fs.existsSync(dir)) return [dir]
-      console.warn('!! whisper binaries not found, dictation will be unavailable (run scripts/build-whisper.sh)')
-      return []
-    })(),
+    extraResource: ['whisper', 'speakers']
+      .map(name => path.join(__dirname, '..', '.whisper-build', 'dist', name))
+      .filter(dir => {
+        if (fs.existsSync(dir)) return true
+        console.warn(`!! ${dir} not found, the related feature will be unavailable (see scripts/build-*.sh)`)
+        return false
+      }),
     name: 'Logseq-OG',
     icon: './icons/logseq_big_sur.icns',
     buildVersion: "92",

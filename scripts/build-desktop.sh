@@ -31,6 +31,12 @@ if [ ! -x "$ROOT/.whisper-build/dist/whisper/bin/whisper-cli-cpu" ]; then
   "$ROOT/scripts/build-whisper.sh" || echo "!! whisper build failed; continuing without dictation"
 fi
 
+# Speaker identification helper (meeting notes); same rules as above.
+if [ ! -x "$ROOT/.whisper-build/dist/speakers/bin/speaker-tool" ]; then
+  echo ">> building speaker-tool for speaker identification"
+  "$ROOT/scripts/build-speaker-tools.sh" || echo "!! speaker-tool build failed; continuing without speaker identification"
+fi
+
 # --- build -----------------------------------------------------------------
 echo ">> [1/4] yarn install (root)"
 yarn install
