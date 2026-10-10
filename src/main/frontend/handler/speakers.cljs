@@ -41,17 +41,17 @@
        :audio-rel (strip-up (prop page :audio))
        :transcript-rel (strip-up (prop page :transcript))})))
 
-(defn- repo-dir [] (config/get-repo-dir (state/get-current-repo)))
+(defn repo-dir [] (config/get-repo-dir (state/get-current-repo)))
 
 (defn- cache-key [{:keys [audio-rel]}] (str (repo-dir) "::" audio-rel))
 
 ;; --- transcript.json --------------------------------------------------------------------
 
-(defn- read-transcript [{:keys [transcript-rel]}]
+(defn read-transcript [{:keys [transcript-rel]}]
   (p/let [text (ipc/ipc "meeting/read-text" (repo-dir) transcript-rel)]
     (when (seq text) (js->clj (js/JSON.parse text) :keywordize-keys true))))
 
-(defn- write-transcript! [{:keys [transcript-rel]} data]
+(defn write-transcript! [{:keys [transcript-rel]} data]
   (ipc/ipc "meeting/write-text" (repo-dir) transcript-rel (js/JSON.stringify (clj->js data) nil 2)))
 
 ;; --- labels on the page ------------------------------------------------------------------

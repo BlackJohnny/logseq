@@ -83,6 +83,14 @@ else
   echo ">> nvcc not found; skipping CUDA build (CPU only)"
 fi
 
+# Third-party notice shipped with the binaries (see resources/forge.config.js)
+cp -f "$SRC/LICENSE" "$OUT/../LICENSE-whisper.cpp"
+cat > "$OUT/../NOTICE.txt" <<NOTICE
+Speech recognition in Logseq uses whisper.cpp ($WHISPER_REF), MIT License
+(LICENSE-whisper.cpp), https://github.com/ggml-org/whisper.cpp
+The Whisper models downloaded on demand are released by OpenAI under the MIT License.
+NOTICE
+
 echo
 echo ">> done:"
 ls -lh "$OUT"

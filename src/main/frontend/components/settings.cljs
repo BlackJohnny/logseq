@@ -6,6 +6,7 @@
             [frontend.components.assets :as assets]
             [frontend.components.conversion :as conversion-component]
             [frontend.components.file-sync :as fs]
+            [frontend.components.minutes :as minutes-ui]
             [frontend.components.plugins :as plugins]
             [frontend.components.svg :as svg]
             [frontend.config :as config]
@@ -861,7 +862,8 @@
            :else
            (shui-ui/button {:size :sm :disabled (some? download)
                             :on-click #(dictation/download-model! model-id)}
-                           "Download"))}))]))
+                           "Download"))}))
+     (minutes-ui/settings-section)]))
 
 (rum/defc sync-enabled-switcher
   [enabled?]

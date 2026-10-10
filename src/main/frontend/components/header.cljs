@@ -20,6 +20,7 @@
             [frontend.ui :as ui]
             [frontend.util :as util]
             [frontend.components.meeting :as meeting-ui]
+            [frontend.components.minutes :as minutes-ui]
             [frontend.components.speakers :as speakers-ui]
             [frontend.handler.dictation :as dictation]
             [frontend.version :refer [version]]
@@ -283,6 +284,9 @@
 
       (when (state/feature-http-server-enabled?)
         (server/server-indicator (state/sub :electron/server)))
+
+      (when (util/electron?)
+        (minutes-ui/minutes-button))
 
       (when (util/electron?)
         (speakers-ui/speakers-button))

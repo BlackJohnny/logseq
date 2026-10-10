@@ -29,6 +29,17 @@ gcc -O2 -Wall -o "$OUT/bin/speaker-tool" "$ROOT/scripts/speaker-tool/speaker-too
 # only the libraries the helper needs (the C API wraps the rest)
 cp -f "$WORK/$NAME/lib/libsherpa-onnx-c-api.so" "$WORK/$NAME/lib/libonnxruntime.so" "$OUT/lib/"
 
+# Third-party licenses shipped with the binaries (see resources/forge.config.js)
+curl -fsSL -o "$OUT/LICENSE-sherpa-onnx" "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v${SHERPA_VERSION}/LICENSE"
+curl -fsSL -o "$OUT/LICENSE-onnxruntime" "https://raw.githubusercontent.com/microsoft/onnxruntime/main/LICENSE"
+cat > "$OUT/NOTICE.txt" <<NOTICE
+Speaker identification in Logseq uses sherpa-onnx v${SHERPA_VERSION} (Apache License 2.0,
+LICENSE-sherpa-onnx, https://github.com/k2-fsa/sherpa-onnx) and ONNX Runtime (MIT License,
+LICENSE-onnxruntime, https://github.com/microsoft/onnxruntime).
+The models downloaded on demand: pyannote segmentation 3.0 (MIT License) and
+WeSpeaker ResNet34 (Apache License 2.0).
+NOTICE
+
 echo
 echo ">> done:"
 ls -lh "$OUT/bin" "$OUT/lib"

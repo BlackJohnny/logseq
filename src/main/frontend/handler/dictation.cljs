@@ -200,13 +200,11 @@
   "Where the transcript should go: the block being edited, or else the one
   edited most recently (the mic button click may have ended editing)."
   []
-  (let [origin (or (when-let [block (state/get-edit-block)]
-                     {:uuid (:block/uuid block) :pos (state/get-edit-pos)})
-                   (when-let [{:keys [at] :as last-edit} @*last-edit]
-                     (when (< (- (js/Date.now) at) 60000)
-                       (select-keys last-edit [:uuid :pos]))))]
-    (js/console.debug "dictation origin:" (pr-str origin))
-    origin))
+  (or (when-let [block (state/get-edit-block)]
+        {:uuid (:block/uuid block) :pos (state/get-edit-pos)})
+      (when-let [{:keys [at] :as last-edit} @*last-edit]
+        (when (< (- (js/Date.now) at) 60000)
+          (select-keys last-edit [:uuid :pos])))))
 
 (defn- fail! [msg level]
   (swap! *state assoc :status :idle)

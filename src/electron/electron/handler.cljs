@@ -20,6 +20,7 @@
             [electron.find-in-page :as find]
             [electron.fs-watcher :as watcher]
             [electron.git :as git]
+            [electron.llm :as llm]
             [electron.logger :as logger]
             [electron.plugin :as plugin]
             [electron.search :as search]
@@ -763,6 +764,15 @@
 
 (defmethod handle :speakers/delete-profile [_win [_ person-name]]
   (speakers/delete-profile! person-name))
+
+(defmethod handle :llm/models [_win [_ config]]
+  (p/then (llm/list-models! config) clj->js))
+
+(defmethod handle :llm/chat [_win [_ request-id config messages opts]]
+  (p/then (llm/chat! request-id config messages opts) clj->js))
+
+(defmethod handle :llm/cancel [_win [_ request-id]]
+  (llm/cancel! request-id))
 
 (defmethod handle :whisper/transcribe [_win [_ audio-b64 opts]]
   (p/then (whisper/transcribe! audio-b64 opts) clj->js))
