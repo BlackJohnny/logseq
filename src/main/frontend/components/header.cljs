@@ -292,6 +292,9 @@
         (speakers-ui/speakers-button))
 
       (when (util/electron?)
+        (meeting-ui/continue-button))
+
+      (when (util/electron?)
         (meeting-ui/meeting-button))
 
       (when (util/electron?)

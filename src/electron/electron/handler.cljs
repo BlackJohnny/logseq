@@ -28,6 +28,7 @@
             [electron.shell :as shell]
             [electron.speakers :as speakers]
             [electron.state :as state]
+            [electron.system-audio :as system-audio]
             [electron.utils :as utils]
             [electron.whisper :as whisper]
             [electron.window :as win]
@@ -713,6 +714,13 @@
 
 (defmethod handle :whisper/server-transcribe [_win [_ audio-b64]]
   (p/then (whisper/server-transcribe! audio-b64) clj->js))
+
+(defmethod handle :system-audio/start [_win [_]]
+  (p/then (system-audio/start!) clj->js))
+
+(defmethod handle :system-audio/stop [_win [_]]
+  (system-audio/stop!)
+  nil)
 
 (defn- meeting-target
   "Resolve `rel-path` inside `repo-dir`; refuses anything that escapes it."

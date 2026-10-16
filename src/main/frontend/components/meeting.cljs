@@ -2,6 +2,7 @@
   "Header button and title dialog for live meeting notes."
   (:require [clojure.string :as string]
             [frontend.handler.meeting :as meeting]
+            [frontend.handler.speakers :as speakers]
             [frontend.state :as state]
             [frontend.ui :as ui]
             [frontend.util :as util]
@@ -29,6 +30,17 @@
 
 (defn- clock [seconds]
   (str (quot seconds 60) ":" (when (< (mod seconds 60) 10) "0") (mod seconds 60)))
+
+(rum/defc continue-button < rum/reactive
+  "On a meeting page: record another part of it (adds a section, a new audio file)."
+  []
+  (state/sub :route-match) ; re-evaluate when the route changes
+  (when (= :idle (:status (rum/react meeting/*state)))
+    (when-let [info (speakers/current-meeting)]
+      [:button.button.icon.inline.mx-1
+       {:title "Continue recording this meeting (adds a new section to the page)"
+        :on-click #(meeting/continue! info)}
+       (ui/icon "player-record")])))
 
 (rum/defc meeting-button < rum/reactive
   []

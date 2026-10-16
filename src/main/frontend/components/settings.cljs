@@ -831,6 +831,11 @@
        :description "Auto prefers the NVIDIA GPU when one is available."
        :-for "dictation_backend"
        :action (select :backend [["auto" "Auto"] ["gpu" "GPU (NVIDIA)"] ["cpu" "CPU"]] "auto")})
+     (row-with-button-action
+      {:left-label "System audio"
+       :description "Meeting notes also transcribe what you hear (the other participants), whatever app the meeting runs in. Linux/PipeWire only; use headphones so the microphone does not pick it up twice."
+       :-for "dictation_system_audio"
+       :action (select :system-audio [["on" "On"] ["off" "Off (microphone only)"]] "on")})
      (for [[model-id {:keys [size-mb installed]}]
            (sort-by (comp :size-mb val) > (:models engine))
            :let [model-id (name model-id)

@@ -141,7 +141,7 @@
   (let [names (into {} (map (juxt :id #(or (not-empty (:name %)) (str "Speaker " (inc (:id %)))))) speakers)]
     (->> segments
          (filter #(not (string/blank? (:text %))))
-         (mapv (fn [s] (assoc (select-keys s [:id :start :text])
+         (mapv (fn [s] (assoc (select-keys s [:id :start :text :audio])
                               :speaker-name (when (some? (:speaker s)) (get names (:speaker s)))))))))
 
 (defn generate!

@@ -89,3 +89,20 @@
 (deftest blocks-tree-skips-empty-sections-test
   (let [tree (minutes/blocks-tree (minutes/normalize {:summary "Doar rezumat"} segs) {:audio-ref "x"})]
     (is (= ["**Summary**"] (map :content (:children tree))))))
+
+(deftest several-recordings-test
+  (let [segs [{:id 0 :start 50 :end 55 :audio "audio.webm" :text "Prima înregistrare."}
+              {:id 1 :start 3 :end 8 :audio "audio-2.webm" :text "A doua înregistrare."}
+              {:id 2 :start 70 :end 75 :audio "audio-2.webm" :text "Încă ceva."}]
+        n (minutes/normalize {:topics [{:title "Ambele" :refs [2 1 0]}
+                                       {:title "Doar a doua" :refs [2 1]}]} segs)
+        [both second-only] (:topics n)
+        tree (minutes/blocks-tree n {:audio-ref "../assets/m/audio.webm"})
+        contents (fn contents [t] (cons (:content t) (mapcat contents (:children t))))]
+    (testing "an item starts where its first cited segment is in the transcript, not at the smallest time"
+      (is (= [50 "audio.webm"] ((juxt :start :audio) both)))
+      (is (= [3 "audio-2.webm"] ((juxt :start :audio) second-only))))
+    (testing "the play button opens the right recording"
+      (let [all (contents tree)]
+        (is (some #(string/includes? % "{{audio-timestamp ../assets/m/audio.webm, 50}} **Ambele**") all))
+        (is (some #(string/includes? % "{{audio-timestamp ../assets/m/audio-2.webm, 3}} **Doar a doua**") all))))))

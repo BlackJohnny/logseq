@@ -3,7 +3,8 @@
   building the prompts, reading the model's JSON, and turning the result into a
   block tree. The model only *cites* transcript segment numbers; timestamps are
   computed here from those citations, never taken from the model."
-  (:require [clojure.string :as string]))
+  (:require [clojure.string :as string]
+            [frontend.util.meeting :as meeting-util]))
 
 ;; --- transcript -> text ---------------------------------------------------------
 
@@ -115,16 +116,20 @@
                        (when (and (number? n) (not (js/isNaN n)) (contains? valid-ids n)) (int n)))))
        distinct sort vec))
 
-(defn- start-of [refs starts]
-  (when (seq refs) (apply min (map starts refs))))
+(defn- first-cited
+  "The cited segment that comes first in the transcript (segments of different
+  recordings each restart at 0, so the smallest :start would be meaningless)."
+  [refs order by-id]
+  (when (seq refs) (by-id (apply min-key order refs))))
 
 (defn normalize
   "Validate the model's JSON against the transcript `segments`: drop empty items and
   citations of segments that do not exist, and compute each item's :start (seconds)
-  from the segments it cites."
+  and :audio (recording file, nil for the first one) from the first segment it cites."
   [data segments]
   (let [valid (set (map :id segments))
-        starts (into {} (map (juxt :id :start)) segments)
+        by-id (into {} (map (juxt :id identity)) segments)
+        order (into {} (map-indexed (fn [i s] [(:id s) i])) segments)
         items (fn [k text-key]
                 (->> (get data k)
                      (keep (fn [item]
@@ -132,10 +137,12 @@
                                    text (->text (get item text-key))
                                    refs (clean-refs (:refs item) valid)]
                                (when text
-                                 (assoc (select-keys item [:summary :owner :due])
-                                        text-key text
-                                        :refs refs
-                                        :start (start-of refs starts))))))
+                                 (let [cited (first-cited refs order by-id)]
+                                   (assoc (select-keys item [:summary :owner :due])
+                                          text-key text
+                                          :refs refs
+                                          :start (:start cited)
+                                          :audio (:audio cited)))))))
                      vec))]
     {:language (or (->text (:language data)) "en")
      :summary (->text (:summary data))
@@ -165,7 +172,8 @@
   `known-names` (the named speakers), so the model cannot create arbitrary pages."
   [{:keys [language summary topics decisions actions questions]} {:keys [audio-ref known-names]}]
   (let [l (get labels language (get labels "en"))
-        play (fn [{:keys [start]}] (when start (str (audio-macro audio-ref start) " ")))
+        play (fn [{:keys [start audio]}]
+               (when start (str (audio-macro (meeting-util/audio-ref-for audio-ref audio) start) " ")))
         section (fn [k children] (when (seq children) {:content (str "**" (get l k) "**") :children children}))
         owner (fn [o] (when o (if (contains? (set known-names) o) (str "[[" o "]]: ") (str o ": "))))]
     {:content (str "## " (:minutes l))

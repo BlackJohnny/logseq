@@ -6,6 +6,7 @@
             [frontend.state :as state]
             [frontend.ui :as ui]
             [frontend.util :as util]
+            [frontend.util.meeting :as meeting-util]
             [logseq.shui.ui :as shui-ui]
             [rum.core :as rum]))
 
@@ -21,8 +22,9 @@
     [:div.flex.items-center.gap-2.py-1
      [:button.button.icon.inline
       {:title "Listen to this speaker"
-       :on-click #(when-let [start (speakers/sample-start id)]
-                    (audio-player/play! (:audio-ref info) start))}
+       :on-click #(when-let [seg (speakers/sample-segment id)]
+                    (audio-player/play! (meeting-util/audio-ref-for (:audio-ref info) (:audio seg))
+                                        (:start seg)))}
       (ui/icon "player-play")]
      [:span.text-sm.opacity-70 {:style {:min-width "8rem"}}
       (str "Vorbitor " (inc id) " · " (clock seconds))]

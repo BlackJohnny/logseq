@@ -12,6 +12,7 @@
             [frontend.handler.editor :as editor-handler]
             [frontend.handler.meeting :as meeting]
             [frontend.state :as state]
+            [frontend.util.meeting :as meeting-util]
             [promesa.core :as p]))
 
 (defonce *state
@@ -82,9 +83,10 @@
                        :when (:block seg)
                        :let [block (db/pull [:block/uuid (uuid (:block seg))])
                              current (some-> block :block/content string/trim)
-                             target (block-content audio-ref seg (label-for new-speakers (:speaker seg)))
-                             known #{(string/trim (block-content audio-ref seg (label-for old-speakers (:speaker seg))))
-                                     (string/trim (block-content audio-ref seg nil))}]
+                             ref (meeting-util/audio-ref-for audio-ref (:audio seg))
+                             target (block-content ref seg (label-for new-speakers (:speaker seg)))
+                             known #{(string/trim (block-content ref seg (label-for old-speakers (:speaker seg))))
+                                     (string/trim (block-content ref seg nil))}]
                        :when (and block (not= current (string/trim target)))
                        :let [_ (when-not (contains? known current) (swap! skipped inc))]
                        :when (contains? known current)]
@@ -119,6 +121,33 @@
                             (dictation/<ipc "speakers/append-pcm" token b64))))))
             (p/resolved nil)
             (range 0 total chunk))))
+
+(defn- file-name [path] (last (string/split (str path) #"/")))
+
+(defn- audio-files
+  "Recording files of the meeting in order (just the page's audio for meetings
+  recorded before there could be several)."
+  [transcript {:keys [audio-rel]}]
+  (let [listed (vec (keep :audio (:recordings transcript)))]
+    (if (seq listed) listed [(file-name audio-rel)])))
+
+(defn- upload-recordings!
+  "Send every recording to the speaker tool as one continuous stream. Resolves to
+  {file -> offset in seconds}: where each recording starts in that stream (computed
+  from the decoded sample counts, so it is exact and never stored)."
+  [token {:keys [audio-rel]} files]
+  (let [dir (string/replace-first audio-rel #"[^/]*$" "")]
+    (p/then
+     (reduce (fn [acc f]
+               (p/then acc
+                       (fn [{:keys [offsets total]}]
+                         (p/let [samples (decode-audio (str dir f))
+                                 _ (upload-pcm! token samples)]
+                           {:offsets (assoc offsets f total)
+                            :total (+ total (/ (.-length samples) dictation/sample-rate))}))))
+             (p/resolved {:offsets {} :total 0})
+             files)
+     :offsets)))
 
 ;; --- analysis -------------------------------------------------------------------------------
 
@@ -157,16 +186,19 @@
                       (p/let [r (dictation/<ipc "speakers/download-models")]
                         (when-not (:ok r) (throw (js/Error. (str "Model download failed: " (:error r)))))))
                   _ (set-message! "Reading the recording...")
-                  samples (decode-audio (:audio-rel info))
-                  _ (set-message! "Preparing the audio...")
-                  _ (upload-pcm! token samples)
+                  transcript (read-transcript info)
+                  files (audio-files transcript info)
+                  offsets (upload-recordings! token info files)
                   _ (set-message! "Identifying the speakers (this can take a few minutes for long meetings)...")
                   result (dictation/<ipc "speakers/diarize" token
                                          {:num-speakers num-speakers :cache-key (cache-key info)})
                   _ (when-not (:ok result) (throw (js/Error. (str (:error result)))))
                   transcript (read-transcript info)
                   old-speakers (:speakers transcript)
-                  segments (mapv #(assoc % :speaker (speaker-at (:segments result) (:start %) (:end %)))
+                  segments (mapv (fn [s]
+                                   (let [off (get offsets (or (:audio s) (first files)) 0)]
+                                     (assoc s :speaker (speaker-at (:segments result)
+                                                                   (+ off (:start s)) (+ off (:end s))))))
                                  (:segments transcript))
                   speakers (mapv (fn [{:keys [id seconds match]}]
                                    {:id id :seconds seconds :name (:name match)})
@@ -201,11 +233,10 @@
   (p/let [_ (dictation/<ipc "speakers/delete-profile" profile-name)]
     (refresh-profiles!)))
 
-(defn sample-start
-  "Start (seconds) of the longest utterance of speaker `id`, for the preview button."
+(defn sample-segment
+  "The longest utterance of speaker `id` (its :audio file and :start), for the preview button."
   [id]
   (->> (:segments @*state)
        (filter #(= id (:speaker %)))
        (sort-by #(- (:start %) (:end %)))
-       first
-       :start))
+       first))
