@@ -6,6 +6,9 @@
  *   speaker-tool diarize --wav f.wav --segmentation model.onnx --embedding model.onnx
  *                        [--num-speakers N] [--threshold T] [--threads N]
  *   speaker-tool embed   --wav f.wav --embedding model.onnx [--start S] [--end E] [--threads N]
+ *   speaker-tool embed-ranges --wav f.wav --embedding model.onnx --ranges r.txt [--threads N]
+ *                        (r.txt: one "start end" pair in seconds per line; one embedding per
+ *                         line is printed, null when the range is too short)
  *
  * Input: 16 kHz mono WAV. Output: one JSON document on stdout; progress on stderr. */
 #include <math.h>
@@ -174,9 +177,41 @@ static int run_diarize(int argc, char **argv) {
   return 0;
 }
 
+static int run_embed_ranges(int argc, char **argv) {
+  const char *wav = arg(argc, argv, "--wav", NULL), *model = arg(argc, argv, "--embedding", NULL),
+             *ranges = arg(argc, argv, "--ranges", NULL);
+  if (!wav || !model || !ranges) { fprintf(stderr, "embed-ranges: --wav, --embedding, --ranges are required\n"); return 2; }
+  const SherpaOnnxWave *w = SherpaOnnxReadWave(wav);
+  if (!w) { fprintf(stderr, "cannot read %s\n", wav); return 1; }
+  const SherpaOnnxSpeakerEmbeddingExtractor *ex = make_extractor(model, atoi(arg(argc, argv, "--threads", "2")));
+  if (!ex) { fprintf(stderr, "cannot load embedding model\n"); return 1; }
+  FILE *f = fopen(ranges, "r");
+  if (!f) { fprintf(stderr, "cannot read %s\n", ranges); return 1; }
+  int dim = SherpaOnnxSpeakerEmbeddingExtractorDim(ex);
+  printf("{\"dim\":%d,\"embeddings\":[", dim);
+  double a, b;
+  int i = 0;
+  while (fscanf(f, "%lf %lf", &a, &b) == 2) {
+    int from = (int)(a * w->sample_rate), to = (int)(b * w->sample_rate);
+    if (from < 0) from = 0;
+    if (to > w->num_samples) to = w->num_samples;
+    float *v = (to - from) >= (int)(MIN_SEGMENT_SECONDS * w->sample_rate)
+                   ? embed(ex, w->sample_rate, w->samples + from, to - from) : NULL;
+    printf("%s", i++ ? "," : "");
+    if (v) print_embedding(v, dim); else printf("null");
+    free(v);
+  }
+  printf("]}\n");
+  fclose(f);
+  SherpaOnnxDestroySpeakerEmbeddingExtractor(ex);
+  SherpaOnnxFreeWave(w);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc >= 2 && strcmp(argv[1], "diarize") == 0) return run_diarize(argc, argv);
   if (argc >= 2 && strcmp(argv[1], "embed") == 0) return run_embed(argc, argv);
-  fprintf(stderr, "usage: speaker-tool diarize|embed ... (see the header of speaker-tool.c)\n");
+  if (argc >= 2 && strcmp(argv[1], "embed-ranges") == 0) return run_embed_ranges(argc, argv);
+  fprintf(stderr, "usage: speaker-tool diarize|embed|embed-ranges ... (see the header of speaker-tool.c)\n");
   return 2;
 }

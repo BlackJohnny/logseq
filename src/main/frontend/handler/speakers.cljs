@@ -13,6 +13,8 @@
             [frontend.handler.meeting :as meeting]
             [frontend.state :as state]
             [frontend.util.meeting :as meeting-util]
+            [frontend.util.property :as property]
+            [frontend.util.speakers :as speakers-util]
             [promesa.core :as p]))
 
 (defonce *state
@@ -20,6 +22,7 @@
          :message nil
          :speakers nil        ; [{:id :name :seconds}] from transcript.json
          :segments nil        ; transcript segments (for the sample buttons)
+         :selection []        ; uuids (strings) of the blocks selected on the page
          :profiles []}))      ; saved voice profiles [{:name :count}]
 
 (defn- set-message! [msg] (swap! *state assoc :message msg))
@@ -74,22 +77,27 @@
 
 (defn- relabel!
   "Give every segment block the label of its current speaker, in one transaction.
-  A block is rewritten only if it still holds what we wrote (the old label or none);
-  blocks edited by hand are left alone. Returns the number of skipped blocks."
-  [{:keys [audio-ref]} segments old-speakers new-speakers]
+  A block is rewritten only if it is still the block we wrote for that utterance
+  (see `speakers-util/ours?`: any label, same text); blocks whose text was edited by
+  hand are left alone. Returns the number of skipped blocks."
+  [{:keys [audio-ref]} segments _old-speakers new-speakers]
   (let [skipped (atom 0)
         changes (vec
                  (for [seg segments
                        :when (:block seg)
                        :let [block (db/pull [:block/uuid (uuid (:block seg))])
-                             current (some-> block :block/content string/trim)
+                             current (some-> block :block/content
+                                             (->> (property/remove-built-in-properties :markdown)))
                              ref (meeting-util/audio-ref-for audio-ref (:audio seg))
-                             target (block-content ref seg (label-for new-speakers (:speaker seg)))
-                             known #{(string/trim (block-content ref seg (label-for old-speakers (:speaker seg))))
-                                     (string/trim (block-content ref seg nil))}]
-                       :when (and block (not= current (string/trim target)))
-                       :let [_ (when-not (contains? known current) (swap! skipped inc))]
-                       :when (contains? known current)]
+                             target (block-content ref seg (label-for new-speakers (:speaker seg)))]
+                       :when block
+                       :when (not= (some-> current string/trim) (string/trim target))
+                       :let [ours? (speakers-util/ours? current (:text seg))
+                             _ (when-not ours?
+                                 (swap! skipped inc)
+                                 (js/console.debug "speakers: block not relabeled" (:block seg)
+                                                   (pr-str current) (pr-str (:text seg))))]
+                       :when ours?]
                    [block target]))]
     (when (seq changes)
       (editor-handler/save-blocks! changes))
@@ -240,3 +248,82 @@
        (filter #(= id (:speaker %)))
        (sort-by #(- (:start %) (:end %)))
        first))
+
+;; --- corrections from the user's selection ------------------------------------------------
+
+(defn capture-selection!
+  "Remember the blocks selected on the page (or the one being edited), before the
+  dialog takes over."
+  []
+  (let [ids (or (seq (state/get-selection-block-ids))
+                (some-> (state/get-edit-block) :block/uuid vector))]
+    (swap! *state assoc :selection (mapv str ids))))
+
+(defn selected-segments
+  "Transcript segments whose block is in the captured selection."
+  []
+  (let [sel (set (:selection @*state))]
+    (filterv #(contains? sel (:block %)) (:segments @*state))))
+
+(defn- find-speaker [speakers id-or-name]
+  (if (string? id-or-name)
+    (first (filter #(= (string/lower-case id-or-name) (some-> (:name %) string/lower-case)) speakers))
+    (first (filter #(= id-or-name (:id %)) speakers))))
+
+(defn- with-seconds
+  "Speakers with :seconds recomputed from the segments."
+  [speakers segments]
+  (let [totals (reduce (fn [m {:keys [speaker start end]}]
+                         (if (some? speaker) (update m speaker (fnil + 0) (- end start)) m))
+                       {} segments)]
+    (mapv #(assoc % :seconds (get totals (:id %) 0)) speakers)))
+
+(defn assign-selection!
+  "The selected blocks were said by `who`: a speaker id, or a name. A name that no
+  speaker has yet creates a new speaker (so this works before any analysis, and for
+  a voice the analysis did not separate). The blocks are pinned to that speaker, then
+  every other utterance that clearly sounds more like the pinned examples than like
+  the speaker it was given is moved too."
+  [info who]
+  (let [sel (set (:selection @*state))
+        who (if (string? who) (some-> who string/trim not-empty) who)]
+    (when (and (= :idle (:status @*state)) (seq sel) (some? who))
+      (swap! *state assoc :status :busy :message "Reading the recording...")
+      (let [token (str (random-uuid))]
+        (-> (p/let [transcript (read-transcript info)
+                    speakers (vec (:speakers transcript))
+                    existing (find-speaker speakers who)
+                    new? (nil? existing)
+                    id (if existing
+                         (:id existing)
+                         (inc (reduce max -1 (map :id speakers))))
+                    speakers (if new? (conj speakers {:id id :name who :seconds 0}) speakers)
+                    pinned (reduce (fn [m b] (assoc m b id)) (or (:pinned transcript) {}) sel)
+                    segments (:segments transcript)
+                    files (audio-files transcript info)
+                    offsets (upload-recordings! token info files)
+                    off (fn [s] (get offsets (or (:audio s) (first files)) 0))
+                    _ (set-message! "Comparing voices...")
+                    result (dictation/<ipc "speakers/embed-ranges" token
+                                           {:ranges (mapv (fn [s] [(+ (off s) (:start s)) (+ (off s) (:end s))]) segments)
+                                            :cache-key (cache-key info)})
+                    _ (when-not (:ok result) (throw (js/Error. (str (:error result)))))
+                    pins (mapv #(get pinned (:block %)) segments)
+                    diarization (into {} (map (juxt :id :embedding)) (:speakers result))
+                    new-ids (speakers-util/reassign segments (:embeddings result) pins diarization)
+                    new-segments (mapv (fn [s sp] (assoc s :speaker sp)) segments new-ids)
+                    moved (count (filter true? (map #(not= (:speaker %1) (:speaker %2)) new-segments segments)))
+                    speakers (with-seconds speakers new-segments)
+                    skipped (relabel! info new-segments speakers speakers)
+                    _ (write-transcript! info (assoc transcript :segments new-segments :speakers speakers :pinned pinned))
+                    ;; a new named voice is remembered for future meetings
+                    voice (when new? (get (speakers-util/centroids segments (:embeddings result) pins diarization) id))
+                    _ (when (seq voice) (dictation/<ipc "speakers/save-embedding" who (clj->js voice)))]
+              (swap! *state assoc :speakers speakers :segments new-segments :selection [] :status :idle
+                     :message (str (when new? (str "New speaker: " who ". "))
+                                   moved " utterances changed speaker."
+                                   (when (pos? skipped)
+                                     (str " " skipped " blocks were edited by hand and were not relabeled."))))
+              (refresh-profiles!))
+            (p/catch (fn [e]
+                       (swap! *state assoc :status :idle :message (str "Failed: " (or (.-message e) e))))))))))

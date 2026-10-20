@@ -762,10 +762,16 @@
 (defmethod handle :speakers/diarize [_win [_ token opts]]
   (p/then (speakers/diarize! token opts) clj->js))
 
+(defmethod handle :speakers/embed-ranges [_win [_ token opts]]
+  (p/then (speakers/embed-ranges! token opts) clj->js))
+
 (defmethod handle :speakers/save-profile [_win [_ person-name cache-key speaker-id]]
   (if-let [embedding (speakers/cached-embedding cache-key speaker-id)]
     (speakers/save-profile! person-name embedding)
     false))
+
+(defmethod handle :speakers/save-embedding [_win [_ person-name embedding]]
+  (speakers/save-profile! person-name (vec embedding)))
 
 (defmethod handle :speakers/list-profiles [_win [_]]
   (clj->js (speakers/list-profiles)))

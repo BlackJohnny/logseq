@@ -38,10 +38,12 @@
 
 (rum/defcs dialog < rum/reactive
   (rum/local "" ::num)
+  (rum/local "" ::who)
   {:did-mount (fn [state] (speakers/load! (first (:rum/args state))) state)}
   [state info]
-  (let [{:keys [status message speakers profiles]} (rum/react speakers/*state)
+  (let [{:keys [status message speakers profiles selection]} (rum/react speakers/*state)
         *num (::num state)
+        *who (::who state)
         busy? (= :busy status)
         n (let [v (js/parseInt @*num 10)] (when (pos? v) v))]
     [:div.p-4 {:style {:min-width "30rem" :max-width "38rem"}}
@@ -56,6 +58,28 @@
       (shui-ui/button {:size :sm :disabled busy?
                        :on-click #(speakers/analyze! info n)}
                       (if (seq speakers) "Analyze again" "Identify speakers"))]
+
+     (when (seq selection)
+       (let [n (count (speakers/selected-segments))
+             who (string/trim @*who)
+             assign! #(when-not (string/blank? who) (reset! *who "") (speakers/assign-selection! info who))]
+         (when (pos? n)
+           [:div.mb-3.p-2.rounded {:style {:background "var(--ls-tertiary-background-color)"}}
+            [:div.text-sm.mb-1 (str n " selected " (if (= 1 n) "utterance" "utterances") " said by:")]
+            (when (seq speakers)
+              [:div.flex.flex-wrap.gap-2.mb-2
+               (for [{:keys [id name]} speakers]
+                 (shui-ui/button {:key id :size :sm :variant :outline :disabled busy?
+                                  :on-click #(speakers/assign-selection! info id)}
+                                 (if (and name (not (string/blank? name))) name (str "Vorbitor " (inc id)))))])
+            [:div.flex.items-center.gap-2
+             [:input.form-input.is-small.flex-1
+              {:list "known-speakers" :placeholder "Name (new or known speaker)"
+               :value @*who :on-change #(reset! *who (util/evalue %))
+               :on-key-down (fn [e] (when (= "Enter" (.-key e)) (assign!)))}]
+             (shui-ui/button {:size :sm :disabled (or busy? (string/blank? who)) :on-click assign!} "Assign")]
+            [:p.text-xs.opacity-70.mt-1
+             "Works without an analysis too. Similar-sounding utterances elsewhere in the meeting are reassigned."]])))
 
      (when message
        [:div.text-sm.mb-3.flex.items-center
@@ -90,7 +114,8 @@
   (state/sub :route-match) ; re-evaluate when the route changes
   (when-let [info (speakers/current-meeting)]
     [:button.button.icon.inline.mx-1
-     {:title "Who said what (identify and name the speakers)"
+     {:title "Who said what (identify and name the speakers). Select text first to say who said it."
+      :on-mouse-down #(speakers/capture-selection!)
       :on-click #(state/set-modal! (fn [] (dialog info))
                                    {:id :meeting-speakers :center? true :close-btn? true})}
      (ui/icon "user-search")]))

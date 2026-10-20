@@ -128,6 +128,12 @@
   (fs/writeFileSync (cache-file key) (js/JSON.stringify (clj->js speakers)))
   true)
 
+(defn cached-speakers [key]
+  (let [f (cache-file key)]
+    (if (fs/pathExistsSync f)
+      (js->clj (js/JSON.parse (fs/readFileSync f "utf8")) :keywordize-keys true)
+      [])))
+
 (defn cached-embedding [key speaker-id]
   (let [f (cache-file key)]
     (when (fs/pathExistsSync f)
@@ -243,3 +249,40 @@
           (p/finally (fn []
                        (fs/removeSync pcm)
                        (fs/removeSync wav)))))))
+
+(defn embed-ranges!
+  "Embeddings of the given [start end] ranges (seconds) of the PCM uploaded under
+  `token`, plus the diarization embedding of every speaker kept under `cache-key`.
+  Resolves {:ok true :embeddings [[...] | nil] :speakers [{:id :embedding}]}."
+  [token {:keys [ranges cache-key]}]
+  (let [pcm (temp-pcm token)
+        wav (str pcm ".wav")
+        ranges-file (str pcm ".ranges.txt")]
+    (cond
+      (not (tool-path))
+      (p/resolved {:ok false :error "speaker-tool not found (run scripts/build-speaker-tools.sh)"})
+
+      (not (models-installed?))
+      (p/resolved {:ok false :error "speaker models are not installed"})
+
+      (not (fs/pathExistsSync pcm))
+      (p/resolved {:ok false :error "no audio uploaded"})
+
+      :else
+      (-> (p/let [_ (pcm->wav! pcm wav)
+                  _ (fs/writeFileSync ranges-file
+                                      (string/join "\n" (map (fn [[a b]] (str a " " b)) ranges)))
+                  result (run-tool! ["embed-ranges" "--wav" wav
+                                     "--embedding" (model-path embedding-model)
+                                     "--ranges" ranges-file
+                                     "--threads" (str (max 1 (min 8 (.-length (os/cpus)))))])]
+            {:ok true
+             :embeddings (:embeddings result)
+             :speakers (cached-speakers cache-key)})
+          (p/catch (fn [e]
+                     (logger/error "speaker embedding failed" e)
+                     {:ok false :error (str (.-message e))}))
+          (p/finally (fn []
+                       (fs/removeSync pcm)
+                       (fs/removeSync wav)
+                       (fs/removeSync ranges-file)))))))
