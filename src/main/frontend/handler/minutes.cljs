@@ -70,6 +70,19 @@
 
 (defn- cancelled? [] (:cancelled? @*request))
 
+(defonce ^:private *step (atom nil)) ; the message of the step in progress, without the counter
+
+(defn- set-step! [message]
+  (reset! *step message)
+  (swap! *state assoc :message message))
+
+(defn on-progress
+  "Called by electron.listener with each `llm-progress` event: characters written so far."
+  [data]
+  (let [{:keys [id chars]} (js->clj data :keywordize-keys true)]
+    (when (and @*step (= id (:id @*request)) (= :busy (:status @*state)))
+      (swap! *state assoc :message (str @*step " the model has answered " (.toLocaleString chars) " characters so far")))))
+
 (defn- chat! [messages]
   (let [id (str (random-uuid))
         {:keys [url api-key model]} (config)]
@@ -157,29 +170,32 @@
                 segments (transcript->segments transcript)
                 _ (when (empty? segments) (throw (js/Error. "The meeting has no transcript yet.")))
                 parts (minutes/chunk-segments segments part-chars)
-                _ (swap! *state assoc :message
+                _ (set-step!
                          (str "Sending the transcript to " (host-of url) " (" (count parts) (if (= 1 (count parts)) " part" " parts") ")..."))
                 data (if (= 1 (count parts))
                        (ask-json! (minutes/final-messages (first parts)))
                        (p/let [notes (sequentially
                                       (fn [[i part]]
-                                        (swap! *state assoc :message (str "Summarizing part " (inc i) " of " (count parts) "..."))
+                                        (set-step! (str "Summarizing part " (inc i) " of " (count parts) "..."))
                                         (p/let [d (ask-json! (minutes/part-messages part (inc i) (count parts)))]
                                           (js/JSON.stringify (clj->js d))))
                                       (map-indexed vector parts))]
-                         (swap! *state assoc :message "Merging the parts...")
+                         (set-step! "Merging the parts...")
                          (ask-json! (minutes/merge-messages notes))))
                 result (minutes/normalize data segments)
                 _ (when (minutes/empty-minutes? result)
                     (throw (js/Error. "The model returned no usable minutes.")))
-                _ (swap! *state assoc :message "Writing the minutes into the page...")
+                _ (do (reset! *step nil)
+                      (swap! *state assoc :message "Writing the minutes into the page..."))
                 known-names (keep #(not-empty (:name %)) (:speakers transcript))
                 block-uuid (write-section! info result known-names)
                 generated-at (.toISOString (js/Date.))
                 _ (write-minutes-file! info (assoc result :block (str block-uuid) :model model
                                                    :generated-at generated-at))]
+          (reset! *step nil)
           (swap! *state assoc :status :idle :message nil :last {:model model :generated-at generated-at}))
         (p/catch (fn [e]
+                   (reset! *step nil)
                    (swap! *state assoc :status :idle :message nil
                           :error (if (cancelled?) "Cancelled." (or (.-message e) (str e)))))))))
 

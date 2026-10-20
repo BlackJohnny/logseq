@@ -802,8 +802,15 @@
 (defmethod handle :llm/models [_win [_ config]]
   (p/then (llm/list-models! config) clj->js))
 
-(defmethod handle :llm/chat [_win [_ request-id config messages opts]]
-  (p/then (llm/chat! request-id config messages opts) clj->js))
+(defmethod handle :llm/chat [^js win [_ request-id config messages opts]]
+  (let [last-sent (atom 0)
+        on-progress (fn [chars]
+                      ;; the renderer only needs a few updates a second
+                      (let [now (js/Date.now)]
+                        (when (and (> (- now @last-sent) 250) (not (.isDestroyed win)))
+                          (reset! last-sent now)
+                          (.send (.-webContents win) "llm-progress" (clj->js {:id request-id :chars chars})))))]
+    (p/then (llm/chat! request-id config messages opts on-progress) clj->js)))
 
 (defmethod handle :llm/cancel [_win [_ request-id]]
   (llm/cancel! request-id))
