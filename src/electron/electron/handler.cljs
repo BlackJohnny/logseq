@@ -14,6 +14,7 @@
             [cljs.reader :as reader]
             [clojure.core.async :as async]
             [clojure.string :as string]
+            [electron.audio-import :as audio-import]
             [electron.backup-file :as backup-file]
             [electron.configs :as cfgs]
             [electron.file-sync-rsapi :as rsapi]
@@ -22,6 +23,7 @@
             [electron.git :as git]
             [electron.llm :as llm]
             [electron.logger :as logger]
+            [electron.meeting-export :as meeting-export]
             [electron.plugin :as plugin]
             [electron.search :as search]
             [electron.server :as server]
@@ -749,6 +751,24 @@
 (defmethod handle :meeting/read-text [_win [_ repo-dir rel-path]]
   (let [target (meeting-target repo-dir rel-path)]
     (when (fs/existsSync target) (fs/readFileSync target "utf8"))))
+
+(defmethod handle :meeting-import/pick-file [_win [_]]
+  (p/then (audio-import/pick-file!) clj->js))
+
+(defmethod handle :meeting-import/convert [_win [_ src repo-dir rel-dest]]
+  (p/then (audio-import/convert! src (meeting-target repo-dir rel-dest)) clj->js))
+
+(defmethod handle :meeting-import/read-pcm [_win [_ token offset len]]
+  (audio-import/read-pcm token offset len))
+
+(defmethod handle :meeting-import/cleanup [_win [_ token]]
+  (audio-import/cleanup! token))
+
+(defmethod handle :meeting-export/pick-save [_win [_ default-name filter-name extension]]
+  (meeting-export/pick-save! default-name filter-name extension))
+
+(defmethod handle :meeting-export/write-file [_win [_ path data encoding]]
+  (meeting-export/write-file! path data encoding))
 
 (defmethod handle :speakers/status [_win [_]]
   (clj->js (speakers/status)))

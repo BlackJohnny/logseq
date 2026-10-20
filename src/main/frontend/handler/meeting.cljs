@@ -367,13 +367,21 @@
          :system-pending (atom 0)
          :held (atom [])}))
 
+(defn- meeting-dir [^js d title]
+  (str "assets/meetings/" (timestamp-str d) "-" (two (.getHours d)) (two (.getMinutes d)) "-" (slugify title)))
+
+(defn- clean-title [title]
+  (if (string/blank? title) "Meeting" (string/trim title)))
+
 (defn- new-meeting-session!
-  "A new meeting: creates its page; the first recording gets the section \"Înregistrarea 1\"."
-  [title model server]
-  (let [d (js/Date.)
-        title (if (string/blank? title) "Meeting" (string/trim title))
+  "A new meeting: creates its page; the first recording gets the section \"Înregistrarea 1\".
+  `opts`: {:date js/Date (default now), :dir (default derived from date and title),
+  :recording extra keys of the first recording}."
+  [title model server {:keys [date dir recording]}]
+  (let [d (or date (js/Date.))
+        title (clean-title title)
         repo-dir (config/get-repo-dir (state/get-current-repo))
-        dir (str "assets/meetings/" (timestamp-str d) "-" (two (.getHours d)) (two (.getMinutes d)) "-" (slugify title))
+        dir (or dir (meeting-dir d title))
         page-name (unique-page-name (str "meetings/" (timestamp-str d) " " title))
         session (make-session
                  {:repo-dir repo-dir :page-name page-name :dir dir :audio-file "audio.webm"
@@ -382,7 +390,7 @@
                          :started-at (.toISOString d)
                          :language (dictation/get-pref :language "auto")
                          :model model :backend (:backend server)
-                         :recordings [{:audio "audio.webm" :started-at (.toISOString d)}]}})]
+                         :recordings [(merge {:audio "audio.webm" :started-at (.toISOString d)} recording)]}})]
     (page-handler/create! page-name
                           {:redirect? true
                            :create-first-block? false
@@ -414,6 +422,32 @@
           :meta {:recordings (conj recordings {:audio audio-file
                                                :started-at (.toISOString (js/Date.))})}})))))
 
+(defn- start-engine!
+  "Make sure the speech engine can run and start the whisper server. Resolves
+  {:model :server}, or nil after reporting the problem with fail!."
+  []
+  (p/let [engine (or (:engine @dictation/*state) (dictation/refresh-status!))
+          model (dictation/selected-model)]
+    (cond
+      (not (:available engine))
+      (do (fail! "Live notes are not available: whisper binaries are missing (run scripts/build-whisper.sh).")
+          nil)
+
+      (not (get-in engine [:models (keyword model) :installed]))
+      (do (fail! "Download a dictation model first (Settings → Dictation).")
+          (state/open-settings! :dictation)
+          nil)
+
+      :else
+      (p/let [server (dictation/<ipc "whisper/server-start"
+                                     {:model model
+                                      :language (dictation/get-pref :language "auto")
+                                      :backend (dictation/get-pref :backend "auto")})]
+        (if (:ok server)
+          {:model model :server server}
+          (do (fail! (str "Could not start the speech engine: " (:error server)))
+              nil))))))
+
 (defn- begin!
   "Start recording. `continue-info` (from speakers/current-meeting) adds a recording to
   that meeting, otherwise a new meeting called `title` is created."
@@ -421,31 +455,16 @@
   (when (and (util/electron?) (= :idle (:status @*state)) (= :idle (:status @dictation/*state)))
     (swap! *state assoc :status :starting :elapsed 0 :pending 0 :segments 0)
     (swap! dictation/*state assoc :busy-elsewhere? true)
-    (-> (p/let [engine (or (:engine @dictation/*state) (dictation/refresh-status!))
-                model (dictation/selected-model)]
-          (cond
-            (not (:available engine))
-            (fail! "Live notes are not available: whisper binaries are missing (run scripts/build-whisper.sh).")
-
-            (not (get-in engine [:models (keyword model) :installed]))
-            (do (fail! "Download a dictation model first (Settings → Dictation).")
-                (state/open-settings! :dictation))
-
-            :else
-            (p/let [server (dictation/<ipc "whisper/server-start"
-                                           {:model model
-                                            :language (dictation/get-pref :language "auto")
-                                            :backend (dictation/get-pref :backend "auto")})]
-              (if-not (:ok server)
-                (fail! (str "Could not start the speech engine: " (:error server)))
-                (p/let [session (if continue-info
-                                  (continued-session! continue-info)
-                                  (new-meeting-session! title model server))
-                        _ (write-transcript! @session {})]
-                  (swap! *state assoc :segments (count @(:segments @session)))
-                  (reset! *session session)
-                  (p/let [opened (open-capture! session)]
-                    (swap! session merge opened)))))))
+    (-> (p/let [{:keys [model server]} (start-engine!)]
+          (when model
+            (p/let [session (if continue-info
+                              (continued-session! continue-info)
+                              (new-meeting-session! title model server {}))
+                    _ (write-transcript! @session {})]
+              (swap! *state assoc :segments (count @(:segments @session)))
+              (reset! *session session)
+              (p/let [opened (open-capture! session)]
+                (swap! session merge opened)))))
         (p/catch (fn [e] (fail! (str "Cannot start the meeting: " (or (.-message e) e))))))))
 
 (defn start! [title] (begin! title nil))
@@ -492,4 +511,94 @@
           (p/catch (fn [e] (notification/show! (str "Meeting stopped with an error: " (or (.-message e) e)) :error)))
           (p/finally (fn []
                        (swap! *state assoc :status :idle)
+                       (swap! dictation/*state assoc :busy-elsewhere? false)))))))
+
+;; --- import an audio file -------------------------------------------------------------
+
+(def ^:private import-chunk-bytes (* 2 dictation/sample-rate 30)) ; 30 s of 16-bit PCM per read
+
+(defn- pcm->frames
+  "Split base64 16-bit PCM into Float32 frames like the live audio callback delivers."
+  [b64]
+  (let [bin (js/atob b64)
+        n (quot (.-length bin) 2)
+        bytes (js/Uint8Array. (.-length bin))
+        _ (dotimes [i (.-length bin)] (aset bytes i (.charCodeAt bin i)))
+        samples (js/Int16Array. (.-buffer bytes) 0 n)]
+    (for [start (range 0 n frame-size)]
+      (let [frame (js/Float32Array. (min frame-size (- n start)))]
+        (dotimes [i (.-length frame)] (aset frame i (/ (aget samples (+ start i)) 32768)))
+        frame))))
+
+(defn pick-import-file!
+  "Open the file dialog. Resolves {:path :name :mtime-ms} or nil."
+  []
+  (dictation/<ipc "meeting-import/pick-file"))
+
+(defn importing? [] (= :importing (:status @*state)))
+
+(defn cancel-import! []
+  (when (importing?) (swap! *state assoc :cancel? true)))
+
+(defn- feed-file!
+  "Run the converted audio of `token` through the same VAD + transcription path as the
+  live microphone, a chunk at a time (waiting for the transcripts keeps memory bounded)."
+  [session token seconds]
+  (let [total (* 2 dictation/sample-rate seconds)]
+    (p/loop [offset 0]
+      (when (and (< offset total) (not (:cancel? @*state)))
+        (p/let [b64 (ipc/ipc "meeting-import/read-pcm" token offset import-chunk-bytes)
+                _ (doseq [frame (pcm->frames b64)]
+                    (on-frame! (channel session :mic) frame))
+                _ @(:chain session)]
+          (swap! *state assoc :progress (min 1 (/ (+ offset import-chunk-bytes) total)))
+          (p/recur (+ offset import-chunk-bytes)))))))
+
+(defn- page-ready! [page-name]
+  (p/loop [tries 0]
+    (when (and (not (db/get-page page-name)) (< tries 30))
+      (p/let [_ (p/delay 100)]
+        (p/recur (inc tries))))))
+
+(defn import!
+  "Transcribe an existing recording as a new meeting. `path` is any audio/video file
+  ffmpeg can read; `date` (js/Date) is when the meeting took place."
+  [{:keys [path title date]}]
+  (when (and (util/electron?) (= :idle (:status @*state)) (= :idle (:status @dictation/*state)))
+    (swap! *state assoc :status :importing :elapsed 0 :pending 0 :segments 0 :progress 0 :cancel? false)
+    (swap! dictation/*state assoc :busy-elsewhere? true)
+    (let [title (clean-title title)
+          repo-dir (config/get-repo-dir (state/get-current-repo))
+          dir (meeting-dir date title)
+          token (atom nil)]
+      (-> (p/let [{:keys [model server]} (start-engine!)
+                  converted (when model
+                              (dictation/<ipc "meeting-import/convert" path repo-dir (str dir "/audio.webm")))]
+            (when converted
+              (when-not (:ok converted)
+                (throw (js/Error. (:error converted))))
+              (reset! token (:token converted))
+              (p/let [seconds (:seconds converted)
+                      session (new-meeting-session! title model server
+                                                    {:date date :dir dir
+                                                     :recording {:imported true :duration seconds}})
+                      s @session
+                      _ (page-ready! (:page-name s))
+                      _ (write-transcript! s {})
+                      _ (feed-file! s @token seconds)
+                      _ (finalize-utterance! (channel s :mic))
+                      _ @(:chain s)
+                      _ (flush-held! s true)
+                      ended (.toISOString (js/Date. (+ (.getTime date) (* 1000 seconds))))
+                      _ (write-transcript! s {:ended-at ended
+                                              :recordings [(assoc (first (:recordings (:meta s))) :ended-at ended)]
+                                              :duration seconds})]
+                (if (:cancel? @*state)
+                  (notification/show! (str "Import cancelled, partial transcript saved: " (:page-name s)) :warning)
+                  (notification/show! (str "Meeting imported: " (:page-name s)) :success)))))
+          (p/catch (fn [e] (notification/show! (str "Cannot import the recording: " (or (.-message e) e)) :error)))
+          (p/finally (fn []
+                       (when @token (ipc/ipc "meeting-import/cleanup" @token))
+                       (ipc/ipc "whisper/server-stop")
+                       (swap! *state assoc :status :idle :cancel? false)
                        (swap! dictation/*state assoc :busy-elsewhere? false)))))))

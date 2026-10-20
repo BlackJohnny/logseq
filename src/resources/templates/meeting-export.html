@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meeting</title>
+<style>
+:root{--bg:#fff;--fg:#1c1e21;--muted:#6b7280;--line:#e5e7eb;--card:#f6f7f9;--accent:#2563eb;--hit:#fde68a;--active:#dbeafe;--sl:38%}
+@media (prefers-color-scheme:dark){:root{--bg:#16181d;--fg:#e6e8eb;--muted:#9aa3af;--line:#2d3139;--card:#1e2128;--accent:#6ea8fe;--hit:#715b00;--active:#1e3a5f;--sl:68%}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+header.top{padding:16px 16px 8px;max-width:60rem;margin:0 auto}
+h1{font-size:1.4rem;margin:0}
+.meta{color:var(--muted);font-size:.85rem;margin-top:2px}
+.bar{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+.bar .in{max-width:60rem;margin:0 auto;padding:8px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bar audio{flex:1 1 18rem;min-width:0;height:36px}
+button,select,input{font:inherit;color:inherit}
+button,select{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:3px 9px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+input[type=search]{flex:1 1 12rem;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 9px}
+.count{color:var(--muted);font-size:.85rem;min-width:3.5rem;text-align:center}
+.follow{font-size:.85rem;color:var(--muted);display:flex;gap:4px;align-items:center}
+main{max-width:60rem;margin:0 auto;padding:8px 16px 64px}
+details.minutes{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;margin:12px 0}
+details.minutes>summary{cursor:pointer;font-weight:600}
+.minutes h3{margin:12px 0 4px;font-size:.95rem}
+.minutes ul{margin:0;padding-left:1.2rem}
+.minutes li{margin:3px 0}
+.play{border:0;background:none;color:var(--accent);padding:0 4px;font-size:.85rem}
+h2.rec{font-size:1rem;margin:20px 0 4px;color:var(--muted);border-bottom:1px solid var(--line)}
+.seg{display:flex;gap:10px;padding:5px 8px;border-radius:6px;cursor:pointer}
+.seg:hover{background:var(--card)}
+.seg.active{background:var(--active)}
+.seg .t{flex:none;width:3.6rem;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;font-size:.85rem;padding-top:2px}
+.seg .b{min-width:0}
+.seg .who{font-weight:600;font-size:.85rem;color:hsl(var(--h) 60% var(--sl));margin-right:6px}
+mark{background:var(--hit);color:inherit;border-radius:2px}
+mark.cur{outline:2px solid var(--accent)}
+.noaudio .seg,.noaudio .play{cursor:default}
+.note{color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<header class="top"><h1 id="title"></h1><div class="meta" id="meta"></div></header>
+<div class="bar"><div class="in">
+  <audio id="audio" controls preload="metadata"></audio>
+  <select id="recsel" title="Recording" hidden></select>
+  <button id="back" title="-10 s">&#8630; 10</button>
+  <button id="fwd" title="+10 s">10 &#8631;</button>
+  <select id="speed" title="Speed"><option value="0.75">0.75&times;</option><option value="1" selected>1&times;</option><option value="1.25">1.25&times;</option><option value="1.5">1.5&times;</option><option value="2">2&times;</option></select>
+</div><div class="in">
+  <input type="search" id="q">
+  <button id="prev">&uarr;</button><span class="count" id="count"></span><button id="next">&darr;</button>
+  <label class="follow"><input type="checkbox" id="follow" checked><span id="followl"></span></label>
+</div></div>
+<main id="main"></main>
+<!--MEETING-DATA-->
+<script>
+(function () {
+  var D = JSON.parse(document.getElementById('data').textContent);
+  var EN = {search: 'Search the transcript', follow: 'Follow', minutes: 'Minutes', summary: 'Summary', topics: 'Topics',
+            decisions: 'Decisions', actions: 'Action items', questions: 'Open questions', recording: 'Recording',
+            noaudio: 'This export has no audio, so the text cannot be played.', speaker: 'Speaker'};
+  var RO = {search: 'Caută în transcript', follow: 'Urmărește', minutes: 'Minută', summary: 'Rezumat', topics: 'Subiecte',
+            decisions: 'Decizii', actions: 'Acțiuni', questions: 'Întrebări deschise', recording: 'Înregistrarea',
+            noaudio: 'Exportul nu conține audio, deci textul nu poate fi redat.', speaker: 'Vorbitor'};
+  var UI = (navigator.language || '').indexOf('ro') === 0 ? RO : EN;
+  var MN = D.minutes && D.minutes.language === 'ro' ? RO : (D.minutes ? EN : UI);
+
+  var audio = document.getElementById('audio');
+  var main = document.getElementById('main');
+  var q = document.getElementById('q');
+  var recsel = document.getElementById('recsel');
+  var cur = -1, urls = {}, active = null, hits = [], hitIdx = -1, rows = [];
+
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function fmt(s) {
+    s = Math.floor(s || 0);
+    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return (h ? h + ':' + pad(m) : m) + ':' + pad(s % 60);
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function fold(s) {
+    return s.split('').map(function (c) { return c.normalize('NFD').charAt(0).toLowerCase().charAt(0) || c; }).join('');
+  }
+
+  // ---- audio -------------------------------------------------------------------
+  var hasAudio = D.recordings.some(function (r) { return r.src || document.getElementById('audio-' + r.index); });
+  function src(i) {
+    if (urls[i]) return urls[i];
+    var el = document.getElementById('audio-' + i);
+    if (el) {
+      var bin = atob(el.textContent.trim()), bytes = new Uint8Array(bin.length);
+      for (var k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+      urls[i] = URL.createObjectURL(new Blob([bytes], {type: D.recordings[i].mime || 'audio/webm'}));
+    } else {
+      urls[i] = D.recordings[i].src;
+    }
+    return urls[i];
+  }
+  function seek(rec, t) {
+    if (!hasAudio) return;
+    var go = function () {
+      try { audio.currentTime = t; } catch (e) {}
+      audio.play();
+    };
+    if (rec !== cur) {
+      cur = rec;
+      recsel.value = rec;
+      audio.src = src(rec);
+      audio.addEventListener('loadedmetadata', go, {once: true});
+      audio.load();
+    } else {
+      go();
+    }
+  }
+
+  // ---- page --------------------------------------------------------------------
+  document.title = D.title;
+  document.documentElement.lang = UI === RO ? 'ro' : 'en';
+  $('title').textContent = D.title;
+  $('meta').textContent = [D.startedAt ? new Date(D.startedAt).toLocaleString() : '', D.duration ? fmt(D.duration) : '']
+    .filter(Boolean).join(' · ');
+  q.placeholder = UI.search;
+  $('followl').textContent = UI.follow;
+  if (!hasAudio) { document.body.className = 'noaudio'; audio.hidden = true; $('back').hidden = $('fwd').hidden = $('speed').hidden = $('follow').parentNode.hidden = true; }
+  if (D.recordings.length > 1) {
+    recsel.hidden = false;
+    recsel.innerHTML = D.recordings.map(function (r) { return '<option value="' + r.index + '">' + UI.recording + ' ' + (r.index + 1) + '</option>'; }).join('');
+    recsel.onchange = function () { seek(+recsel.value, 0); audio.pause(); };
+  }
+
+  function playBtn(item) {
+    if (item.start == null) return '';
+    return '<button class="play" data-rec="' + item.rec + '" data-t="' + item.start + '">&#9654; ' + fmt(item.start) + '</button>';
+  }
+  function minutesHtml(m) {
+    var out = '<details class="minutes" open><summary>' + MN.minutes + '</summary>';
+    if (m.summary) out += '<h3>' + MN.summary + '</h3><p>' + esc(m.summary) + '</p>';
+    var list = function (key, title, line) {
+      if (!m[key] || !m[key].length) return;
+      out += '<h3>' + title + '</h3><ul>' + m[key].map(function (it) { return '<li>' + playBtn(it) + line(it) + '</li>'; }).join('') + '</ul>';
+    };
+    list('topics', MN.topics, function (t) { return '<b>' + esc(t.title) + '</b>' + (t.summary ? ' &mdash; ' + esc(t.summary) : ''); });
+    list('decisions', MN.decisions, function (d) { return esc(d.text); });
+    list('actions', MN.actions, function (a) {
+      return (a.owner ? '<b>' + esc(a.owner) + ':</b> ' : '') + esc(a.text) + (a.due ? ' (' + esc(a.due) + ')' : '');
+    });
+    list('questions', MN.questions, function (x) { return esc(x.text); });
+    return out + '</details>';
+  }
+
+  var html = D.minutes ? minutesHtml(D.minutes) : '';
+  if (!hasAudio) html += '<p class="note">' + UI.noaudio + '</p>';
+  var lastRec = -1;
+  D.segments.forEach(function (s, i) {
+    if (D.recordings.length > 1 && s.rec !== lastRec) {
+      html += '<h2 class="rec">' + UI.recording + ' ' + (s.rec + 1) + '</h2>';
+    }
+    lastRec = s.rec;
+    var sp = s.speaker == null ? null : D.speakers[s.speaker];
+    html += '<div class="seg" id="s' + i + '"' + ' data-i="' + i + '"><span class="t">' + fmt(s.start) + '</span><span class="b">' +
+      (sp ? '<span class="who" style="--h:' + (sp.id * 47 % 360) + '">' + esc(sp.name) + '</span>' : '') +
+      '<span class="tx"></span></span></div>';
+  });
+  main.innerHTML = html;
+  rows = D.segments.map(function (s, i) { return {seg: s, el: $('s' + i), tx: $('s' + i).querySelector('.tx')}; });
+  rows.forEach(function (r) { r.tx.textContent = r.seg.text; });
+
+  main.addEventListener('click', function (e) {
+    var p = e.target.closest ? e.target.closest('.play') : null;
+    if (p) { seek(+p.getAttribute('data-rec'), +p.getAttribute('data-t')); return; }
+    var row = e.target.closest ? e.target.closest('.seg') : null;
+    if (row && !String(window.getSelection()).length) {
+      var s = D.segments[+row.getAttribute('data-i')];
+      seek(s.rec, s.start);
+    }
+  });
+
+  // ---- follow the playback -----------------------------------------------------
+  audio.addEventListener('timeupdate', function () {
+    var t = audio.currentTime, found = null;
+    for (var i = 0; i < rows.length; i++) {
+      var s = rows[i].seg;
+      if (s.rec === cur && s.start <= t + 0.25) found = rows[i];
+      else if (s.rec === cur && s.start > t) break;
+    }
+    if (found === active) return;
+    if (active) active.el.classList.remove('active');
+    active = found;
+    if (active) {
+      active.el.classList.add('active');
+      if ($('follow').checked) active.el.scrollIntoView({block: 'center', behavior: 'smooth'});
+    }
+  });
+  $('speed').onchange = function () { audio.playbackRate = +$('speed').value; };
+  audio.addEventListener('loadedmetadata', function () { audio.playbackRate = +$('speed').value; });
+  function skip(d) { if (hasAudio && cur >= 0) audio.currentTime = Math.max(0, audio.currentTime + d); }
+  $('back').onclick = function () { skip(-10); };
+  $('fwd').onclick = function () { skip(10); };
+  document.addEventListener('keydown', function (e) {
+    var tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'AUDIO' || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'ArrowLeft') { skip(-10); e.preventDefault(); }
+    else if (e.key === 'ArrowRight') { skip(10); e.preventDefault(); }
+    else if (e.key === ' ' && cur >= 0) { audio.paused ? audio.play() : audio.pause(); e.preventDefault(); }
+    else if (e.key === '/') { q.focus(); e.preventDefault(); }
+  });
+
+  // ---- search --------------------------------------------------------------------
+  function mark(text, needle) {
+    var f = fold(text), n = fold(needle), out = '', from = 0, at;
+    while (n && (at = f.indexOf(n, from)) >= 0) {
+      out += esc(text.slice(from, at)) + '<mark>' + esc(text.slice(at, at + n.length)) + '</mark>';
+      from = at + n.length;
+    }
+    return out + esc(text.slice(from));
+  }
+  function showHit(i) {
+    var old = main.querySelector('mark.cur');
+    if (old) old.className = '';
+    hitIdx = i;
+    if (i >= 0) {
+      var m = hits[i].querySelector('mark');
+      m.className = 'cur';
+      m.scrollIntoView({block: 'center'});
+    }
+    $('count').textContent = hits.length ? (i + 1) + '/' + hits.length : (q.value.trim() ? '0' : '');
+  }
+  function search() {
+    var needle = q.value.trim();
+    hits = [];
+    rows.forEach(function (r) {
+      if (needle && fold(r.seg.text).indexOf(fold(needle)) >= 0) { r.tx.innerHTML = mark(r.seg.text, needle); hits.push(r.el); }
+      else if (r.tx.innerHTML !== esc(r.seg.text)) r.tx.textContent = r.seg.text;
+    });
+    showHit(hits.length ? 0 : -1);
+  }
+  function step(d) { if (hits.length) showHit((hitIdx + d + hits.length) % hits.length); }
+  q.addEventListener('input', search);
+  q.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { step(e.shiftKey ? -1 : 1); e.preventDefault(); }
+    else if (e.key === 'Escape') { q.value = ''; search(); q.blur(); }
+  });
+  $('next').onclick = function () { step(1); };
+  $('prev').onclick = function () { step(-1); };
+})();
+</script>
+</body>
+</html>

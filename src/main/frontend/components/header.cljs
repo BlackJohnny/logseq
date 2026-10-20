@@ -295,7 +295,13 @@
         (meeting-ui/continue-button))
 
       (when (util/electron?)
+        (meeting-ui/export-button))
+
+      (when (util/electron?)
         (meeting-ui/meeting-button))
+
+      (when (util/electron?)
+        (meeting-ui/import-button))
 
       (when (util/electron?)
         (dictation-button))
