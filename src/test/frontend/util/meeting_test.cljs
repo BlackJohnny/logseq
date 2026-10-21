@@ -39,3 +39,8 @@
     (is (not (meeting/leak? (mic 3.7 9.3 "Așa sunt responsabili")
                             [(assoc (first system) :source "mic")]))
         "only system segments count")))
+
+(deftest speech-threshold-test
+  (is (= 0.015 (meeting/speech-threshold 0.002)) "quiet room: the floor")
+  (is (< 0.015 (meeting/speech-threshold 0.01) 0.05) "a fan raises it")
+  (is (= 0.05 (meeting/speech-threshold 0.15)) "a generator cannot push it above the voices"))

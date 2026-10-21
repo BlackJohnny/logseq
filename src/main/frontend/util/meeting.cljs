@@ -11,6 +11,19 @@
     audio-ref
     (string/replace-first audio-ref #"[^/]*$" file)))
 
+(def ^:private min-speech-level 0.015) ; RMS floor for "speech"
+(def ^:private max-speech-level 0.05)  ; ... and the most the noise floor may raise it to
+
+(defn speech-threshold
+  "RMS above which a frame counts as speech, given the running estimate of the
+  background `noise`. It follows the noise (3.5x) so a fan does not read as speech,
+  but never goes above `max-speech-level`: with a loud, steady noise (a generator, a
+  crowd) the estimate keeps rising until it exceeds the voices themselves, and
+  everything after that would be dropped as \"silence\". Past the cap the audio is
+  simply cut into long chunks and whisper separates speech from noise itself."
+  [noise]
+  (min max-speech-level (max min-speech-level (* 3.5 noise))))
+
 (def ^:private word-re (js/RegExp. "[\\p{L}\\p{N}]+" "gu"))
 
 (def ^:private time-margin 1.5)     ; seconds: the two sources never line up exactly

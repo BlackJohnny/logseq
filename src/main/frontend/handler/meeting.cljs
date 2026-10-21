@@ -34,7 +34,6 @@
 (def ^:private min-speech-ms 300)
 (def ^:private end-silence-ms 700)             ; pause that ends an utterance
 (def ^:private max-utterance-s 25)             ; whisper works best on <30 s
-(def ^:private min-threshold 0.015)            ; RMS floor for "speech"
 (def ^:private max-hold-ms 20000)              ; longest a mic segment waits for its system twin
 
 (defonce *state
@@ -225,7 +224,7 @@
   (let [{:keys [in-speech? noise sample-pos preroll]} @vad
         n (.-length frame)
         level (rms frame)
-        threshold (max min-threshold (* 3.5 noise))
+        threshold (meeting-util/speech-threshold noise)
         speech? (> level threshold)]
     (swap! vad assoc :sample-pos (+ sample-pos n))
     (cond
